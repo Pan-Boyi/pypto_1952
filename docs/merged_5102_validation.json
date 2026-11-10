@@ -1,0 +1,81 @@
+{
+  "date": "2026-11-10",
+  "validation_scope": {
+    "confirmed_on": "2026-11-11",
+    "local_acceptance": [
+      "cpu_simulation",
+      "pv_simulation",
+      "device_code_compilation",
+      "om_build"
+    ],
+    "local_device_available": false,
+    "local_remote_board_access": false,
+    "device_validation_owner": "user_in_intranet",
+    "device_validation_required_for_local_acceptance": false
+  },
+  "source_commits": {
+    "pto-isa": "03056184236a5d389e9c362e147b80340930f774",
+    "pypto-framework": "e1f83a3901ffadc7786ec86a40fcee94d23b80e2",
+    "pypto-atc": "c5d128aaa34674fec53dac33bb03756dc380cb31",
+    "pypto-gym": "d97a8f1525362e4b69b9eaec8ab0dcb1b0c5097a"
+  },
+  "peer_commits": {
+    "pto-isa": "256a599b215eab6a4a9d47564c2bb787771fce18",
+    "pypto": "0da8d1be19fcfcc6bc4b786a4034140a0fef1651"
+  },
+  "environment": {
+    "os": "Ubuntu 24.04 AArch64",
+    "python": "3.12.3",
+    "cann": "9.2.0",
+    "pv": "selected 9.1 beta1 model via MODEL_DIR",
+    "venv": true
+  },
+  "tests": {
+    "pto_compile_cpu_pv": 104,
+    "cpu_target_gtest": 19,
+    "pypto_framework": 181,
+    "pypto_atc": 63,
+    "gym": 48,
+    "deployment": 95
+  },
+  "test_skips": 0,
+  "artifacts": [
+    {
+      "case": "dec-enc-fp16-4k",
+      "status": "bundle-built",
+      "om_sha256": "967662f8f591af56b863421bdad084439a79058124d1ec83edd193913f3a47f6",
+      "header_mismatches": [],
+      "device_execution": "not_run"
+    },
+    {
+      "case": "dec-enc-fp32",
+      "status": "bundle-built",
+      "om_sha256": "17ef5448c12b3e757eb97cdec4b72e5543c176d3bac7f279c6e00033d9f2931d",
+      "header_mismatches": [],
+      "device_execution": "not_run"
+    },
+    {
+      "case": "dec-enc-optimized",
+      "status": "bundle-built",
+      "om_sha256": "5420e07f2001b5b86405700c5ee5a5274e4a271ce73b41f1a8fa51509dceedc6",
+      "header_mismatches": [],
+      "device_execution": "not_run"
+    },
+    {
+      "case": "gemm-final",
+      "status": "bundle-built",
+      "om_sha256": "8a752b53726111b9a0e8adbc2b5d618c85cc1c3f881284b93a65884a41b7467b",
+      "header_mismatches": [],
+      "device_execution": "not_run"
+    },
+    {
+      "case": "swiglu",
+      "status": "bundle-built",
+      "om_sha256": "b61c3a29f9c524d66e90883e34beba7dce04e4bff588173977b54bf14cb3324c",
+      "header_mismatches": [],
+      "device_execution": "not_run"
+    }
+  ],
+  "device_execution": "not_run",
+  "profiling": "not_run"
+}

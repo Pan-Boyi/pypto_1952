@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=70.3.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pypto-1952"
+version = "0.1.0"
+description = "Two-host static OM testing and profiling for existing PyPTO-Pro operators"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {file = "LICENSE"}
+
+[project.scripts]
+pypto-1952 = "pypto_1952.run_profile:main"
+
+[tool.setuptools.packages.find]
+include = ["pypto_1952*"]
+
+[tool.setuptools.package-data]
+pypto_1952 = ["*.json"]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint.isort]
+force-sort-within-sections = true
+
+[tool.ruff.format]
+quote-style = "preserve"
