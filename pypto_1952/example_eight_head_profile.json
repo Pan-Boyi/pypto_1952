@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "host": "board5102",
+  "runtime_env": null,
+  "toolkit_root": null,
+  "pto_root": null,
+  "build_dir": null,
+  "pypto_root": null,
+  "gym_root": null,
+  "provider": null,
+  "msprof_py": null,
+  "output_root": null,
+  "remote_root": "/tmp/pypto-eight-head-profile",
+  "python": "python3",
+  "msprof": "/var/msprof",
+  "device": 0,
+  "warmup": 5,
+  "repeat": 50,
+  "timeout": 1800,
+  "block_dim": 8
+}

@@ -64,12 +64,13 @@ def _local_path(value, base):
     return (path if path.is_absolute() else base / path).resolve()
 
 
-def load_config(path):
+def load_config(path, *, defaults=None, require_build=True, output_folder="dec-enc-profile"):
+    defaults = DEFAULTS if defaults is None else defaults
     path = Path(path).expanduser().resolve(strict=True)
     raw = json.loads(path.read_text())
-    if not isinstance(raw, dict) or set(raw) - DEFAULTS.keys():
-        raise ValueError("配置必须为 JSON 对象，且只能包含 example_dec_enc_profile.json 中的字段")
-    config = {**DEFAULTS, **raw}
+    if not isinstance(raw, dict) or set(raw) - defaults.keys():
+        raise ValueError("配置必须为 JSON 对象，且只能包含对应示例配置中的字段")
+    config = {**defaults, **raw}
     if type(config["schema_version"]) is not int or config["schema_version"] != 1:
         raise ValueError("不支持的配置 schema_version")
     for key in ("device", "warmup", "repeat", "timeout"):
@@ -111,13 +112,15 @@ def load_config(path):
     config["gym_root"] = (
         config["gym_root"] or Path(os.environ.get("PYPTO_GYM_ROOT", REPO.parent / "pypto-gym")).resolve()
     )
-    config["build_dir"] = config["build_dir"] or config["pypto_root"] / "build"
-    cache = config["build_dir"] / "CMakeCache.txt"
-    if (
-        not cache.is_file()
-        or "CMAKE_HOME_DIRECTORY:INTERNAL=" + str(config["pypto_root"]) not in cache.read_text().splitlines()
-    ):
-        raise ValueError("build_dir 必须是 pypto_root 对应的 CMake 目录；首次安装见 README.md")
+    if require_build:
+        config["build_dir"] = config["build_dir"] or config["pypto_root"] / "build"
+    if config["build_dir"] is not None:
+        cache = config["build_dir"] / "CMakeCache.txt"
+        if (
+            not cache.is_file()
+            or "CMAKE_HOME_DIRECTORY:INTERNAL=" + str(config["pypto_root"]) not in cache.read_text().splitlines()
+        ):
+            raise ValueError("build_dir 必须是 pypto_root 对应的 CMake 目录；首次安装见 README.md")
     if not config["msprof_py"]:
         candidates = [
             toolkit / suffix
@@ -129,7 +132,7 @@ def load_config(path):
         config["msprof_py"] = next((candidate for candidate in candidates if candidate.is_file()), None)
     if config["msprof_py"] is None or not config["msprof_py"].is_file():
         raise ValueError("找不到编译机 msprof.py，请在配置中填写 msprof_py")
-    config["output_root"] = config["output_root"] or REPO / "output/dec-enc-profile"
+    config["output_root"] = config["output_root"] or REPO / "output" / output_folder
     remote_target(
         SimpleNamespace(
             host=config["host"],
@@ -171,7 +174,7 @@ def _run(command, log, *, timeout=None):
 
 
 def _board_preflight(config, log):
-    script = 'set -e; if [ -n "$1" ]; then source "$1"; fi; test -x "$2"; '
+    script = 'set -e; if [ -n "$1" ]; then source "$1" || exit $?; fi; set -e; test -x "$2"; '
     script += '"$3" -c "import sys; assert sys.version_info >= (3, 7, 9), sys.version; print(sys.version)"'
     command = ["bash", "-c", script, "pypto-preflight", config["runtime_env"] or "", config["msprof"], config["python"]]
     _run(
@@ -181,7 +184,7 @@ def _board_preflight(config, log):
     )
 
 
-def format_summary(report, dtype, shape):
+def format_summary(report, dtype, shape, *, title=None):
     if (
         report.get("status") != "passed"
         or not report.get("performance")
@@ -194,8 +197,8 @@ def format_summary(report, dtype, shape):
         raise ValueError("缺少设备节点或明确的微秒单位")
     lines = [
         "",
-        "DecEnc {} {}  精度: PASSED  测量: {} 次（已去掉精度执行与预热）".format(
-            dtype, "x".join(map(str, shape)), performance["repeat"]
+        "{}  精度: PASSED  测量: {} 次（已去掉精度执行与预热）".format(
+            title or "DecEnc {} {}".format(dtype, "x".join(map(str, shape))), performance["repeat"]
         ),
     ]
     for name in performance["expected_nodes"]:
