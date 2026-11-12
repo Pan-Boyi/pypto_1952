@@ -18,6 +18,8 @@
 
 编译机可以没有 NPU。执行机不安装 PyPTO、PTO、gym、ONNX、OPP 或编译工具，也不接收 golden。使用下文双机自动化命令时，内网编译机需能通过 SSH/SCP 访问执行机；本地仿真和构建不需要连接执行机。
 
+编译机和执行机无法直连时，使用 [静态出包与离线测试](docs/OFFLINE_TESTING.md)：`scripts/static_1952.sh build` 在编译机完成构建并生成 `runtime.tar.gz`；板端解压后用 `runtime/run.sh` 执行，生成 `results.tar.gz`；搬回编译机后用 `scripts/static_1952.sh accept` 验精度。全流程不要求 SSH，也不自动切换 Python 环境。
+
 ## 1. 准备源码和 venv
 
 四个仓库可放在同一级目录。前三个仓库使用整理后的 `codex/1952-native-om` 分支；本仓库使用 `main`。
@@ -67,6 +69,8 @@ python -c 'import sys, pypto, pypto_pro_atc; print(sys.executable); print(pypto.
 gym 的测试资产不随 wheel 打包，因此要保留 gym **源码 checkout**，不能只安装一个 gym wheel。算子修改后重新生成 OM；框架 C++ 或 Python 版本变化后，先更新对应的 PyPTO 扩展和 CMake 配置。
 
 ## 2. 直接测试已有 DecEnc
+
+八路 FP16 MLP 使用独立的一键入口，见 [八路 MLP 编译、执行与 profiling](docs/EIGHT_HEAD_PROFILE.md)。在编译机配置一次 SSH 和两端工具路径后，运行 `bash scripts/profile_eight_head.sh`，即可完成四个 kernel 编译、OM 构建、上传、执行、数据回收、精度验证、profiling 解析及终端统计打印。算子及 golden 仍来自 gym，不复制进部署仓。
 
 在本仓库根目录执行：
 
