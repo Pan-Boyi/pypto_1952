@@ -33,11 +33,11 @@ bash scripts/static_1952.sh build \
 
 `build` 完整复用原 `test_1952.sh build` 的参数和编译实现，再自动执行离线打包。首次源码配置按仓库 README 安装。只有需要增量更新当前源码 checkout 的 C++ 扩展时才传 `--build-dir "$PYPTO_SOURCE_ROOT/build"`，不强制它作为已安装环境的前置条件。
 
-这次八路 FP16 MLP 在 gym 有专用入口，自动选择 provider、op、dtype 和默认 8-block 调度：
+GEMMFusedKernel 在 gym 有专用入口，自动选择 provider、op、dtype 和默认 8-block 调度：
 
 ```bash
-bash "$PYPTO_GYM_ROOT/ops/pro/experimental/eight_head_mlp_5102/scripts/test_static_1952.sh" \
-  build --output /产物/eight-head-fp16-b8-01
+bash "$PYPTO_GYM_ROOT/ops/pro/experimental/gemm_fused_kernel/scripts/test_static_1952.sh" \
+  build --output /产物/gemm-fused-kernel-fp16-b8-01
 ```
 
 该入口从上述 `PYPTO_PRO_TOOLKIT_ROOT` / `PTO_LIB_PATH` 取工具链路径，或者显式传 `--toolkit-root` / `--pto-root`。用 `--block-dim 4` 和另一个全新 `--output` 构建 4-block 版本。默认同级布局中可不设置 `PYPTO_1952_ROOT`。可从任意工作目录调用，`--output` 的相对路径相对于部署仓根目录。
@@ -95,11 +95,11 @@ tar -xzf runtime.tar.gz
 bash runtime/run.sh --verify-only
 
 # runtime 环境已经配置时：
-bash runtime/run.sh --device 0 --output /板端任务/eight-head-run-01
+bash runtime/run.sh --device 0 --output /板端任务/gemm-fused-kernel-run-01
 
 # 需要显式 source 板端环境时，将它放在第一个参数：
 bash runtime/run.sh --runtime-env /板端/runtime/set_env.sh \
-  --device 0 --output /板端任务/eight-head-run-02
+  --device 0 --output /板端任务/gemm-fused-kernel-run-02
 ```
 
 板端默认用其当前 `python3`；如需指定，使用板端自己的 `PYTHON=/板端/Python/bin/python`，不要沿用编译机 Python 的绝对路径。板端 runtime 路径独立配置，不能照抄编译机 CANN 路径。
@@ -127,9 +127,9 @@ bash runtime/run.sh --runtime-env /板端/runtime/set_env.sh \
 ```bash
 cd "$PYPTO_1952_ROOT"
 bash scripts/static_1952.sh accept \
-  --build /产物/eight-head-fp16-b8-01 \
+  --build /产物/gemm-fused-kernel-fp16-b8-01 \
   --results-archive /回收/results.tar.gz \
-  --output /产物/eight-head-check-01
+  --output /产物/gemm-fused-kernel-check-01
 ```
 
 也可用 gym 算子脚本的 `accept` 子命令，参数相同。验收复用原 `host.evaluate`，检查实际运行的 OM/request、输入/输出合同、双哨兵一致性及有限性，最后和编译侧 golden 按阈值比较。若有重复计时，还检查调用计数和最终输出精度；通过后才给出 whole-OM 主机时间分布。

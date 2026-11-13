@@ -11,12 +11,12 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from pypto_1952 import dec_enc_profile as common, eight_head_profile as profile, host, profiling, run_profile
+from pypto_1952 import dec_enc_profile as common, gemm_fused_kernel_profile as profile, host, profiling, run_profile
 from tests import test_host as fixtures
 from tests.test_profiling import add_profile_result
 
 
-class EightHeadProfileTests(unittest.TestCase):
+class GEMMFusedKernelProfileTests(unittest.TestCase):
     def setUp(self):
         self.fixture = fixtures.HostTests()
         self.fixture.setUp()
@@ -105,6 +105,7 @@ class EightHeadProfileTests(unittest.TestCase):
             output = Path(arguments[arguments.index("--output") + 1])
             if arguments[0] == "build":
                 self.assertEqual(arguments[arguments.index("--provider") + 1], str(self.provider))
+                self.assertEqual(arguments[arguments.index("--op") + 1], "GEMMFusedKernel")
                 self.assertEqual(arguments[arguments.index("--block-dim") + 1], "8")
                 self.assertNotIn("--build-dir", arguments)
                 if build_failure:
@@ -136,7 +137,7 @@ class EightHeadProfileTests(unittest.TestCase):
 
     def test_default_gym_provider_and_config_validation(self):
         self.exporter()
-        default_provider = self.root / "gym/ops/pro/experimental/eight_head_mlp_5102/provider.py"
+        default_provider = self.root / "gym/ops/pro/experimental/gemm_fused_kernel/provider.py"
         default_provider.parent.mkdir(parents=True)
         default_provider.write_text("# fixture\n")
         self.config_path.write_text(json.dumps({**self.raw, "provider": None}))
@@ -163,6 +164,7 @@ class EightHeadProfileTests(unittest.TestCase):
         rc, output, stdout, _ = self.execute()
         self.assertEqual(rc, 0)
         self.assertEqual([c[0] for c in self.transport_calls], ["ssh", "scp", "ssh", "scp", "scp"])
+        self.assertIn("GEMMFusedKernel FP16", stdout)
         self.assertEqual(len(self.export_calls), 1)
         report = json.loads((output / "profile/result.json").read_text())
         self.assertEqual(report["status"], "passed")

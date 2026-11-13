@@ -10,7 +10,7 @@
   "provider": null,
   "msprof_py": null,
   "output_root": null,
-  "remote_root": "/tmp/pypto-eight-head-profile",
+  "remote_root": "/tmp/pypto-gemm-fused-kernel-profile",
   "python": "python3",
   "msprof": "/var/msprof",
   "device": 0,

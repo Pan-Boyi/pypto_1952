@@ -1,4 +1,4 @@
-"""One compiler-side command: FP16 eight-head build, upload, execute, retrieve, verify and profile."""
+"""One compiler-side command: FP16 GEMMFusedKernel build, upload, execute, retrieve, verify and profile."""
 
 import argparse
 from datetime import datetime, timezone
@@ -13,30 +13,30 @@ import uuid
 from . import dec_enc_profile as common
 
 REPO = Path(__file__).resolve().parents[1]
-DEFAULT_CONFIG = Path(__file__).with_name("eight_head_profile.local.json")
-DEFAULTS = {**common.DEFAULTS, "remote_root": "/tmp/pypto-eight-head-profile", "block_dim": 8, "provider": None}
+DEFAULT_CONFIG = Path(__file__).with_name("gemm_fused_kernel_profile.local.json")
+DEFAULTS = {**common.DEFAULTS, "remote_root": "/tmp/pypto-gemm-fused-kernel-profile", "block_dim": 8, "provider": None}
 EXPECTED_NODES = ("fc1", "activation", "fc2", "params")
 
 
 def load_config(path):
     path = Path(path).expanduser().resolve(strict=True)
-    config = common.load_config(path, defaults=DEFAULTS, require_build=False, output_folder="eight-head-profile")
+    config = common.load_config(path, defaults=DEFAULTS, require_build=False, output_folder="gemm-fused-kernel-profile")
     if type(config["block_dim"]) is not int or not 1 <= config["block_dim"] <= 8:
         raise ValueError("block_dim 必须是 1..8 的整数")
     if config["provider"] is None:
-        config["provider"] = config["gym_root"] / "ops/pro/experimental/eight_head_mlp_5102/provider.py"
+        config["provider"] = config["gym_root"] / "ops/pro/experimental/gemm_fused_kernel/provider.py"
     else:
         config["provider"] = common._local_path(config["provider"], path.parent)
     if not config["provider"].is_file():
-        raise ValueError("找不到八路 FP16 provider，请更新 gym checkout 或填写 provider: " + str(config["provider"]))
+        raise ValueError("找不到 GEMMFusedKernel provider，请更新 gym checkout 或填写 provider: " + str(config["provider"]))
     return config
 
 
 def format_summary(report, block_dim):
     performance = report.get("performance") or {}
     if performance.get("expected_nodes") != list(EXPECTED_NODES):
-        raise ValueError("profiling 节点与八路 FP16 的 fc1/activation/fc2/params 不匹配")
-    text = common.format_summary(report, "fp16", [], title="Eight-head MLP FP16 block_dim={}".format(block_dim))
+        raise ValueError("profiling 节点与 GEMMFusedKernel 的 fc1/activation/fc2/params 不匹配")
+    text = common.format_summary(report, "fp16", [], title="GEMMFusedKernel FP16 block_dim={}".format(block_dim))
     lines = [text, "汇总范围                         median(us)       mean(us)        min(us)        max(us)"]
     total = performance["device_task_sum_us"]
     if total.get("scope") != "sum_native_task_durations_not_end_to_end_latency":
@@ -77,7 +77,7 @@ def execute(config):
         print("[1/4] 检查板端 SSH、runtime、Python 和 msprof", flush=True)
         common._board_preflight(config, root / "preflight.log")
         state["stage"] = "build"
-        build = ["build", "--provider", str(config["provider"]), "--op", "eight-head-mlp-fp16",
+        build = ["build", "--provider", str(config["provider"]), "--op", "GEMMFusedKernel",
                  "--dtype", "fp16", "--block-dim", str(config["block_dim"]),
                  "--toolkit-root", str(config["toolkit_root"]), "--pto-root", str(config["pto_root"]),
                  "--output", str(root / "build")]
@@ -127,7 +127,7 @@ def execute(config):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--config", type=Path, default=os.environ.get("PYPTO_EIGHT_HEAD_PROFILE_CONFIG", DEFAULT_CONFIG))
+        "--config", type=Path, default=os.environ.get("PYPTO_GEMM_FUSED_KERNEL_PROFILE_CONFIG", DEFAULT_CONFIG))
     parser.add_argument("--init", action="store_true", help="只生成一次本机配置；不会覆盖已有文件")
     parser.add_argument("--block-dim", type=int, choices=range(1, 9), help="本次覆盖配置中的 block_dim")
     args = parser.parse_args(argv)
