@@ -1,9 +1,9 @@
-# 八路 FP16 MLP：在编译机一条命令完成测试
+# GEMMFusedKernel：在编译机一条命令完成测试
 
-入口为 `scripts/profile_eight_head.sh`。脚本运行在**编译机 A**，通过 SSH/SCP 控制执行机 B，执行机只需兼容的 5102/1952 驱动、固件、AscendCL runtime、Python 3.7.9+ 及 msprof 采集器。
+入口为 `scripts/profile_gemm_fused_kernel.sh`。脚本运行在**编译机 A**，通过 SSH/SCP 控制执行机 B，执行机只需兼容的 5102/1952 驱动、固件、AscendCL runtime、Python 3.7.9+ 及 msprof 采集器。
 
 ```text
-编译机加载 gym 的八路 FP16 provider
+编译机加载 gym 的 GEMMFusedKernel provider
   → 编译 4 个原生 Pro kernel → ONNX/ATC → 静态 OM
   → 生成输入与独立 golden
   → 只上传 OM、输入和执行器
@@ -24,7 +24,17 @@ git clone https://github.com/Pan-Boyi/pypto_1952.git
 git clone -b codex/1952-native-om https://gitcode.com/pan-boyi/pypto-gym.git
 ```
 
-八路 kernel、FP16 参考和 provider 位于 gym 的 `ops/pro/experimental/eight_head_mlp_5102/`。部署仓只提供流程脚本，不携带另一份 kernel/golden。现有 gym checkout 若没有该目录，需要更新上述分支，或在配置中填写包含该 provider 的绝对路径。PyPTO 与 PTO-ISA 继续使用已适配 5102 的版本，准备方法见 README。
+八路 kernel、FP16 参考和 provider 位于 gym 的 `ops/pro/experimental/gemm_fused_kernel/`。部署仓只提供流程脚本，不携带另一份 kernel/golden。现有 gym checkout 若没有该目录，需要更新上述分支，或在配置中填写包含该 provider 的绝对路径。PyPTO 与 PTO-ISA 继续使用已适配 5102 的版本，准备方法见 README。
+
+算子名、OM 图名和 CLI 的 `--op` 统一使用 `GEMMFusedKernel`。Python 编译接口为：
+
+```python
+from ops.pro.experimental.gemm_fused_kernel import GEMMFusedKernel
+
+kernels = GEMMFusedKernel(block_dim=8)
+```
+
+返回的四个原生阶段为 `first_gemm`、`bias_leaky`、`second_gemm`、`postprocess`，由 provider 组装为静态 OM。输入输出布局及 FP16 计算保持不变，第 2、6 路输出为 `1.5 * sigmoid(delta)`。接口改名后需重新编译 OM。
 
 激活编译机已有 conda/venv 后运行脚本。也可通过 `PYTHON=/所选环境/bin/python` 指定编译机解释器；脚本不自动创建或激活 venv。`build_dir=null` 使用已安装的框架，只有需要增量重编源码 C++ 扩展时才填写对应 CMake build 目录。
 
@@ -33,10 +43,10 @@ git clone -b codex/1952-native-om https://gitcode.com/pan-boyi/pypto-gym.git
 从部署仓根目录运行：
 
 ```bash
-bash scripts/profile_eight_head.sh --init
+bash scripts/profile_gemm_fused_kernel.sh --init
 ```
 
-编辑生成的 `pypto_1952/eight_head_profile.local.json`。该文件被 gitignore 排除；示例在 `pypto_1952/example_eight_head_profile.json`。
+编辑生成的 `pypto_1952/gemm_fused_kernel_profile.local.json`。该文件被 gitignore 排除；示例在 `pypto_1952/example_gemm_fused_kernel_profile.json`。
 
 | 字段 | 位置与含义 |
 |---|---|
@@ -47,10 +57,10 @@ bash scripts/profile_eight_head.sh --init
 | `toolkit_root` | **编译机** CANN 根目录，内含 `set_env.sh` |
 | `msprof_py` | **编译机** `analysis/msprof/msprof.py`，也可用 SDK 标准布局自动查找 |
 | `pypto_root` / `pto_root` / `gym_root` | 编译机对应源码路径，可按同级目录或现有环境变量查找 |
-| `provider` | 默认 gym 八路算子 provider，通常保持 `null` |
+| `provider` | 默认 gym GEMMFusedKernel provider，通常保持 `null` |
 | `build_dir` | 可选的编译机 PyPTO CMake 目录；不要求每次重编框架 |
-| `output_root` | 编译机结果根目录；默认 `output/eight-head-profile` |
-| `remote_root` | 执行机任务根目录；默认 `/tmp/pypto-eight-head-profile` |
+| `output_root` | 编译机结果根目录；默认 `output/gemm-fused-kernel-profile` |
+| `remote_root` | 执行机任务根目录；默认 `/tmp/pypto-gemm-fused-kernel-profile` |
 | `block_dim` | 默认 `8`，也可每次命令行覆盖为 `4` 等 1..8 的值 |
 | `warmup` / `repeat` | 默认预热 5 次、测量 50 次，精度的两次执行单独排除 |
 | `timeout` | 每次 SSH/SCP 操作超时秒数，默认 1800 |
@@ -60,13 +70,13 @@ bash scripts/profile_eight_head.sh --init
 ## 3. 每次只执行一个脚本
 
 ```bash
-bash scripts/profile_eight_head.sh
+bash scripts/profile_gemm_fused_kernel.sh
 
 # 比较 4-block 版本；每次自动创建新的本地/远端目录。
-bash scripts/profile_eight_head.sh --block-dim 4
+bash scripts/profile_gemm_fused_kernel.sh --block-dim 4
 
 # 使用指定配置文件。
-bash scripts/profile_eight_head.sh --config /实际路径/eight-head.json
+bash scripts/profile_gemm_fused_kernel.sh --config /实际路径/gemm-fused-kernel.json
 ```
 
 输入、参数、中间张量及输出为 FP16，GEMM 使用 5102 原生定点累加器，输入和参考数据由 gym provider 生成。该脚本不接收 dtype/shape，避免把固定算子的合同误当动态配置。
@@ -84,7 +94,7 @@ bash scripts/profile_eight_head.sh --config /实际路径/eight-head.json
 ## 4. 看结果与失败日志
 
 ```text
-output/eight-head-profile/fp16-b8-<时间与唯一ID>/
+output/gemm-fused-kernel-profile/fp16-b8-<时间与唯一ID>/
   one_click_result.json      整个流程状态、失败阶段、命令和配置
   preflight.log             SSH/runtime/Python/msprof 检查
   build.log                 编译入口日志

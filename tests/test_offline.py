@@ -183,7 +183,7 @@ class OfflineTests(unittest.TestCase):
         selected.chmod(0o755)
         environment = dict(os.environ, PYTHON=str(selected), OFFLINE_TEST_ARGS=str(args_file),
                            PYPTO_1952_ROOT=str(repo), PYPTO_PRO_TOOLKIT_ROOT="/sdk path", PTO_LIB_PATH="/pto path")
-        gym = repo.parent / "pypto-gym/ops/pro/experimental/eight_head_mlp_5102"
+        gym = repo.parent / "pypto-gym/ops/pro/experimental/gemm_fused_kernel"
         command = ["bash", str(gym / "scripts/test_static_1952.sh"), "build", "--output", "/new build"]
         result = subprocess.run(command, cwd=self.root, env=environment, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)

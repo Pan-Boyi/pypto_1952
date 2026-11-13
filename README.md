@@ -70,7 +70,7 @@ gym 的测试资产不随 wheel 打包，因此要保留 gym **源码 checkout**
 
 ## 2. 直接测试已有 DecEnc
 
-八路 FP16 MLP 使用独立的一键入口，见 [八路 MLP 编译、执行与 profiling](docs/EIGHT_HEAD_PROFILE.md)。在编译机配置一次 SSH 和两端工具路径后，运行 `bash scripts/profile_eight_head.sh`，即可完成四个 kernel 编译、OM 构建、上传、执行、数据回收、精度验证、profiling 解析及终端统计打印。算子及 golden 仍来自 gym，不复制进部署仓。
+GEMMFusedKernel 使用独立的一键入口，见 [GEMMFusedKernel 编译、执行与 profiling](docs/GEMM_FUSED_KERNEL_PROFILE.md)。在编译机配置一次 SSH 和两端工具路径后，运行 `bash scripts/profile_gemm_fused_kernel.sh`，即可完成四个 kernel 编译、OM 构建、上传、执行、数据回收、精度验证、profiling 解析及终端统计打印。算子及 golden 仍来自 gym，不复制进部署仓。
 
 在本仓库根目录执行：
 
