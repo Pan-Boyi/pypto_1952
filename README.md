@@ -72,6 +72,8 @@ gym 的测试资产不随 wheel 打包，因此要保留 gym **源码 checkout**
 
 GEMMFusedKernel 使用独立的一键入口，见 [GEMMFusedKernel 编译、执行与 profiling](docs/GEMM_FUSED_KERNEL_PROFILE.md)。在编译机配置一次 SSH 和两端工具路径后，运行 `bash scripts/profile_gemm_fused_kernel.sh`，即可完成四个 kernel 编译、OM 构建、上传、执行、数据回收、精度验证、profiling 解析及终端统计打印。算子及 golden 仍来自 gym，不复制进部署仓。
 
+DecEncFused、FFMFused 和 InputFused 使用 [三个 ISP 算子的静态 OM 与板端验证流程](docs/TRANSFORMER_ISP_1952.md)。在编译机运行 `scripts/build_transformer_ops.sh build --op <算子> ...`，将生成的运行包搬到板端，分别执行包内的 `test_dec_enc_fused.sh`、`test_ffm_fused.sh`、`test_input_fused.sh` 即可直接验精度。板端无需安装 PyPTO 或 PyTorch。
+
 在本仓库根目录执行：
 
 ```bash

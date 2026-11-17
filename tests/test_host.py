@@ -194,14 +194,14 @@ class HostTests(unittest.TestCase):
         for actual, golden, options in (
             (b"123", b"123", {"dtype": "fp32"}),
             (b"12", b"1234", {}),
-            (b"1234", b"1234", {"dtype": "int32"}),
+            (b"1234", b"1234", {"dtype": "int64"}),
             (b"1234", b"1234", {"atol": float("nan")}),
             (b"1234", b"1234", {"rtol": -1}),
         ):
             with self.subTest(options=options), self.assertRaises(ValueError):
                 host.compare(actual, golden, **options)
         self.assertEqual(host.tensor_bytes({"shape": [1, 64, 2025, 2048], "dtype": "fp32"}), 1061683200)
-        for record in ({"shape": [0, 2], "dtype": "fp32"}, {"shape": [2], "dtype": "int32"}):
+        for record in ({"shape": [0, 2], "dtype": "fp32"}, {"shape": [2], "dtype": "int64"}):
             with self.subTest(record=record), self.assertRaises(ValueError):
                 host.tensor_bytes(record)
 

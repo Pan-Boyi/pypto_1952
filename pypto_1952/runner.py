@@ -14,7 +14,7 @@ import sys
 import time
 
 IO_CHUNK_BYTES = 1024 * 1024
-DTYPES = {0: ("fp32", 4), 1: ("fp16", 2)}
+DTYPES = {0: ("fp32", 4), 1: ("fp16", 2), 3: ("int32", 4)}
 
 
 class ModelDimensions(ct.Structure):
@@ -118,19 +118,21 @@ def load_execution(path):
         seen.add(name)
         item["_path"] = _payload(path.parent, item)
         item["_bytes"] = item["_path"].stat().st_size
-    output = request["output"]
-    if not isinstance(output, dict):
-        raise ValueError("Execution output must contain its logical and audited model names")
-    names = output.get("model_names", [output["name"]])
-    if (
-        not isinstance(output.get("name"), str)
-        or not output["name"]
-        or not isinstance(names, list)
-        or not names
-        or any(not isinstance(name, str) or not name for name in names)
-    ):
-        raise ValueError("Execution output requires its logical and audited model names")
-    output["model_names"] = names
+    outputs = request.get("outputs") or [request.get("output")]
+    seen = set()
+    for output in outputs:
+        if not isinstance(output, dict):
+            raise ValueError("Execution output must contain its logical and audited model names")
+        names = output.get("model_names", [output.get("name")])
+        if (not isinstance(output.get("name"), str) or not output["name"] or output["name"] in seen
+                or not isinstance(names, list) or not names
+                or any(not isinstance(name, str) or not name for name in names)):
+            raise ValueError("Execution output requires its logical and audited model names")
+        seen.add(output["name"])
+        output["model_names"] = names
+    request["output"] = outputs[0]
+    if len(outputs) > 1:
+        request["outputs"] = outputs
     request["_om_path"], request["_sha256"] = om_path, sha256(raw)
     return request
 
@@ -144,7 +146,7 @@ def _descriptor(acl, desc, index, direction):
     if dimensions.dimCount == 0 or dimensions.dimCount > 128 or size <= 0 or any(dim <= 0 for dim in shape):
         raise ValueError("Invalid runtime tensor dimensions or byte size")
     if dtype not in DTYPES:
-        raise ValueError("Runtime tensor dtype must be FP16 or FP32")
+        raise ValueError("Runtime tensor dtype must be FP16 or FP32 or INT32")
     elements = 1
     for dim in shape:
         elements *= dim
@@ -251,7 +253,8 @@ def execute(acl, request, output_dir, device=0, report=None, warmup=0, repeat=0)
             raise RuntimeError("aclmdlCreateDesc returned null")
         _checked(acl.aclmdlGetDesc(desc, model_id), "aclmdlGetDesc")
         count = int(acl.aclmdlGetNumInputs(desc))
-        if count != len(request["inputs"]) or acl.aclmdlGetNumOutputs(desc) != 1:
+        requested_outputs = request.get("outputs") or [request["output"]]
+        if count != len(request["inputs"]) or acl.aclmdlGetNumOutputs(desc) != len(requested_outputs):
             raise ValueError("Model input/output count differs from the execution request")
         ordered = [None] * count
         for tensor in request["inputs"]:
@@ -265,18 +268,22 @@ def execute(acl, request, output_dir, device=0, report=None, warmup=0, repeat=0)
             ordered[index.value] = tensor
             report["inputs"].append(dict(metadata, name=tensor["name"], sha256=tensor["sha256"]))
         report["inputs"].sort(key=lambda item: item["model_index"])
-        actual_name = acl.aclmdlGetOutputNameByIndex(desc, 0)
-        if actual_name not in [name.encode() for name in request["output"]["model_names"]]:
-            raise ValueError("Runtime output name is absent from the audited execution request")
-        metadata = _descriptor(acl, desc, 0, "Output")
-        report["output"] = dict(metadata, name=request["output"]["name"], model_name=actual_name.decode())
-        size = metadata["bytes"]
-        for tensor in ordered + [None]:
-            allocation_size = tensor["_bytes"] if tensor is not None else size
+        output_metadata = []
+        for index, tensor in enumerate(requested_outputs):
+            actual_name = acl.aclmdlGetOutputNameByIndex(desc, index)
+            if actual_name not in [name.encode() for name in tensor["model_names"]]:
+                raise ValueError("Runtime output name is absent from the audited execution request")
+            metadata = _descriptor(acl, desc, index, "Output")
+            output_metadata.append(dict(metadata, name=tensor["name"], model_name=actual_name.decode()))
+        report["output"] = output_metadata[0]
+        if len(output_metadata) > 1:
+            report["outputs"] = output_metadata
+        for index, tensor in enumerate(ordered + output_metadata):
+            allocation_size = tensor["_bytes"] if index < count else tensor["bytes"]
             address = ct.c_void_p()
             _checked(acl.aclrtMalloc(ct.byref(address), allocation_size, 0), "aclrtMalloc")
             allocations.append(address)
-            if tensor is not None:
+            if index < count:
                 _copy_input(acl, address, tensor)
             buffer = acl.aclCreateDataBuffer(address, allocation_size)
             if not buffer:
@@ -287,11 +294,24 @@ def execute(acl, request, output_dir, device=0, report=None, warmup=0, repeat=0)
             if not dataset:
                 raise RuntimeError("aclmdlCreateDataset returned null")
             datasets.append(dataset)
-        for buffer in buffers[:-1]:
+        for buffer in buffers[:count]:
             _checked(acl.aclmdlAddDatasetBuffer(datasets[0], buffer), "input dataset")
-        _checked(acl.aclmdlAddDatasetBuffer(datasets[1], buffers[-1]), "output dataset")
+        for buffer in buffers[count:]:
+            _checked(acl.aclmdlAddDatasetBuffer(datasets[1], buffer), "output dataset")
+
+        def save_outputs(stem):
+            saved = []
+            for index, metadata in enumerate(output_metadata):
+                filename = stem + ("_" + str(index) if index else "") + ".bin"
+                saved.append(_save_output(acl, allocations[count + index], metadata["bytes"],
+                                          Path(output_dir) / filename))
+                if len(output_metadata) > 1:
+                    saved[-1]["name"] = metadata["name"]
+            return saved
+
         for number, sentinel in enumerate((0x7F, 0x80), 1):
-            _prefill_output(acl, allocations[-1], size, sentinel)
+            for index, metadata in enumerate(output_metadata):
+                _prefill_output(acl, allocations[count + index], metadata["bytes"], sentinel)
             profile["attempted_execution_calls"] += 1
             started = time.perf_counter()
             _checked(acl.aclmdlExecute(model_id, datasets[0], datasets[1]), "aclmdlExecute")
@@ -299,9 +319,11 @@ def execute(acl, request, output_dir, device=0, report=None, warmup=0, repeat=0)
             report["execution_calls"] += 1
             profile["correctness_calls"] += 1
             profile["total_execution_calls"] += 1
-            filename = "actual.bin" if number == 1 else "actual_second.bin"
-            saved = _save_output(acl, allocations[-1], size, Path(output_dir) / filename)
-            report["rounds"].append(dict(saved, index=number, sentinel=sentinel, elapsed_seconds=elapsed))
+            saved = save_outputs("actual" if number == 1 else "actual_second")
+            record = dict(saved[0], index=number, sentinel=sentinel, elapsed_seconds=elapsed)
+            if len(saved) > 1:
+                record["outputs"] = saved
+            report["rounds"].append(record)
         if profile["enabled"]:
             profile["status"] = "warmup"
             for _ in range(warmup):
@@ -319,7 +341,10 @@ def execute(acl, request, output_dir, device=0, report=None, warmup=0, repeat=0)
                 profile["completed_repeat"] += 1
                 profile["total_execution_calls"] += 1
                 profile["host_wall_seconds"].append(elapsed)
-            profile["final_output"] = _save_output(acl, allocations[-1], size, Path(output_dir) / "profile_actual.bin")
+            saved = save_outputs("profile_actual")
+            profile["final_output"] = saved[0]
+            if len(saved) > 1:
+                profile["final_outputs"] = saved
             profile["status"] = "completed"
         return report
     finally:

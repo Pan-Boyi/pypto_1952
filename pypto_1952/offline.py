@@ -4,6 +4,7 @@ import argparse
 import json
 from pathlib import Path
 import platform
+import re
 import shutil
 import statistics
 import sys
@@ -71,7 +72,8 @@ def _unpack_results(archive, destination):
     seen = set()
     with tarfile.open(archive, "r:gz") as tar:
         for member in tar:
-            if not member.isfile() or member.name not in allowed or member.name in seen:
+            extra_output = re.fullmatch(r"results/(?:actual(?:_second)?|profile_actual)_[1-9][0-9]*\.bin", member.name)
+            if not member.isfile() or (member.name not in allowed and not extra_output) or member.name in seen:
                 raise ValueError("Unexpected, duplicate or unsafe result archive member: " + member.name)
             seen.add(member.name)
             target = destination / member.name

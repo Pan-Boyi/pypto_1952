@@ -1,6 +1,7 @@
 """Compiler-host entry point: build, transfer, execute on 5102, retrieve and compare."""
 
 import argparse
+from contextlib import nullcontext
 import hashlib
 import importlib.util
 import json
@@ -148,13 +149,19 @@ def build(args):
         raise ValueError("Provider must supply make_case and bind_case callbacks")
     for name, kernel in kernels.items():
         print(f"Compiling native Pro {name} for dav-510r2", flush=True)
-        native = compile_device_kernel(
-            kernel,
-            output / "native" / name if graph else output / "native",
-            toolkit_root=args.toolkit_root,
-            pto_root=args.pto_root,
-            block_dim=spec.get("block_dim", 1),
-        )
+        context = nullcontext()
+        if spec.get("pass_options"):
+            import pypto
+            context = pypto.options(pass_options=spec["pass_options"])
+        with context:
+            native = compile_device_kernel(
+                kernel,
+                output / "native" / name if graph else output / "native",
+                toolkit_root=args.toolkit_root,
+                pto_root=args.pto_root,
+                block_dim=spec.get("block_dim", 1),
+                **spec.get("kernel_options", {}).get(name, {}),
+            )
         if spec.get("annotate_manifest"):
             manifest = json.loads(native.read_text())
             spec["annotate_manifest"](manifest)

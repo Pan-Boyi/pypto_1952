@@ -327,7 +327,7 @@ class RunnerTests(unittest.TestCase):
 
     def test_unsupported_runtime_dtype_is_rejected_before_execution(self):
         acl = FakeACL()
-        acl.aclmdlGetInputDataType = lambda *_: 3
+        acl.aclmdlGetInputDataType = lambda *_: 9
         with self.assertRaisesRegex(ValueError, "FP16 or FP32"):
             self.invoke(acl, suffix="unsupported-dtype")
         self.assert_clean(acl)
