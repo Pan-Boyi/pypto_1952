@@ -12,7 +12,7 @@
 | [Pan-Boyi/pto-isa](https://gitcode.com/pan-boyi/pto-isa) | `codex/1952-native-om` | `62e9893255a8389e6a6fcba1f4d0def20d5217ea` |
 | [Pan-Boyi/pypto-gym](https://gitcode.com/pan-boyi/pypto-gym) | `codex/1952-transformer-om` | `30a9c4188585e2f75c1ab75df3b3b88009f22d66` |
 
-PyPTO 和 PTO-ISA 分别同步了 joshjms 提交到 lim-jiunnbin 仓库的 PR #2，包含它们依赖的先前卷积支持提交，以快进方式合并到上述 1952 分支。两个提交就是 PR 的正式 head，无额外源码修改。gym 使用三个算子的 OM 适配修复版本，provider 位于 `ops/pypto_pro/experimental/ops_transformer/<算子>/provider.py`。这里的 gym 分支与旧 DecEnc/GEMMFusedKernel 流程的 `codex/1952-native-om` 分支不同，应使用独立 checkout。
+PyPTO 和 PTO-ISA 的已验证卷积支持已合并到上表所列 Pan-Boyi 仓库的 1952 分支。编译时统一从这些仓库取源码，并固定到上表提交。gym 使用三个算子的 OM 适配修复版本，provider 位于 `ops/pypto_pro/experimental/ops_transformer/<算子>/provider.py`。这里的 gym 分支与旧 DecEnc/GEMMFusedKernel 流程的 `codex/1952-native-om` 分支不同，应使用独立 checkout。
 
 | 算子 | 默认输入 | OM 输出 | 原始容差 atol / rtol |
 |---|---|---|---|
