@@ -14,6 +14,12 @@
 
 编译时使用包含本次修复的 gym checkout，provider 位于 `ops/pypto_pro/experimental/ops_transformer/<算子>/provider.py`。PyPTO 和 PTO-ISA 使用上表版本；这两个依赖的源码未做额外修改。更新 PyPTO 后需同时重建、安装 C++ 接口和 Python 绑定，避免混用旧的 `pypto_impl`。
 
+修复版 gym 已发布到 Pan-Boyi 的 `codex/1952-transformer-om` 分支，提交 `30a9c418`：
+
+```bash
+git clone -b codex/1952-transformer-om https://gitcode.com/pan-boyi/pypto-gym.git
+```
+
 | 算子 | 默认输入 | OM 输出 | 原始容差 atol / rtol |
 |---|---|---|---|
 | `dec_enc_fused` | FP16 `[1,4,1080,1920]` + ISP 参数/权重 | `output`: FP16 `[1,16,1080,1920]` | `0.0005 / 0.001` |
