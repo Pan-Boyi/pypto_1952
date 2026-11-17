@@ -35,7 +35,7 @@ git clone https://github.com/Pan-Boyi/pypto_1952.git
 
 继续使用 venv 隔离方案。本次复测环境是 Ubuntu 24.04 AArch64、Python 3.12、CANN 9.2；这次没有修改 Python 3.9 的兼容性。
 
-下面记录本次复测使用的源码开发安装。PyPTO 官方安装采用 `python3 build_ci.py --clean --no_isolation` 构建，再安装生成的 `.run` 包；安装参数和 CANN 安装前缀按[官方编译安装文档](https://gitcode.com/cann/pypto/blob/master/docs/zh/install/build_and_install.md)填写。官方安装后的环境可使用第 3 节分步入口，并省略 `--build-dir`；第 2 节一键入口目前依赖源码 CMake 构建目录。
+下面记录本次复测使用的源码开发安装。PyPTO 的安装包方式采用 `python3 build_ci.py --clean --no_isolation` 构建，再安装生成的 `.run` 包；安装参数和 CANN 安装前缀按 [Pan-Boyi 仓内编译安装文档](https://gitcode.com/pan-boyi/pypto/blob/codex%2F1952-native-om/docs/zh/install/build_and_install.md)填写。安装包环境可使用第 3 节分步入口，并省略 `--build-dir`；第 2 节一键入口目前依赖源码 CMake 构建目录。
 
 ```bash
 # 从四个仓库的共同父目录执行；CANN 路径换成编译机实际安装位置。
