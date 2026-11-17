@@ -10,7 +10,7 @@ import struct
 import subprocess
 
 IO_CHUNK_BYTES = 1024 * 1024
-DTYPES = {"fp16": (2, "<e", 1), "fp32": (4, "<f", 0)}
+DTYPES = {"fp16": (2, "<e", 1), "fp32": (4, "<f", 0), "int32": (4, "<i", 3)}
 
 
 def sha256(path):
@@ -23,7 +23,7 @@ def sha256(path):
 
 def tensor_bytes(record):
     if record.get("dtype") not in DTYPES:
-        raise ValueError("Supported tensor dtypes are fp16 and fp32")
+        raise ValueError("Supported tensor dtypes are fp16, fp32 and int32")
     shape = record.get("shape")
     if not isinstance(shape, list) or not shape or any(type(dim) is not int or dim <= 0 for dim in shape):
         raise ValueError("Tensor shape must contain positive integers")
@@ -35,7 +35,7 @@ def relative_file(root, name):
     if path.is_absolute() or ".." in path.parts or not path.parts:
         raise ValueError("Expected a relative artifact path: " + str(name))
     result = (Path(root) / path).resolve(strict=True)
-    if not result.is_relative_to(Path(root).resolve()):
+    if result != Path(root).resolve() and Path(root).resolve() not in result.parents:
         raise ValueError("Artifact path escapes its directory")
     return result
 
@@ -45,16 +45,17 @@ def create_execution(case_file, binding_file):
     binding = json.loads(Path(binding_file).read_text())
     if binding.get("case_sha256") != sha256(case_file) or binding.get("runtime_dependencies") != "device_kernel_only":
         raise ValueError("Execution request requires a verified case/model binding")
+    outputs = [{"name": item["name"], "model_names": names["om_declared_names"]}
+               for item, names in zip(case["outputs"], binding["output_name_bindings"])]
+    if len(outputs) != len(case["outputs"]) or not outputs:
+        raise ValueError("Missing audited output bindings")
     return {
         "schema_version": 1,
         "kind": "pypto_pro_execution_request",
         "runtime_dependencies": "device_kernel_only",
         "om": {"file": "model.om", "sha256": binding["om_sha256"]},
         "inputs": [{"name": item["name"], "file": item["file"], "sha256": item["sha256"]} for item in case["inputs"]],
-        "output": {
-            "name": case["outputs"][0]["name"],
-            "model_names": binding["output_name_bindings"][0]["om_declared_names"],
-        },
+        **({"output": outputs[0]} if len(outputs) == 1 else {"outputs": outputs}),
     }
 
 
@@ -107,7 +108,7 @@ def validate_build(build_dir):
 
 def _compare_chunks(chunks, size, atol, rtol, dtype):
     if dtype not in DTYPES:
-        raise ValueError("Supported tensor dtypes are fp16 and fp32")
+        raise ValueError("Supported tensor dtypes are fp16, fp32 and int32")
     width, format_, _ = DTYPES[dtype]
     if size <= 0 or size % width:
         raise ValueError("Output byte size mismatch")
@@ -127,8 +128,8 @@ def _compare_chunks(chunks, size, atol, rtol, dtype):
             continue
         if np is not None:
             # FP64 arithmetic matches Python float, including FP32 subtraction near its extrema.
-            got = np.frombuffer(actual, dtype="<f" + str(width)).astype(np.float64)
-            want = np.frombuffer(golden, dtype="<f" + str(width)).astype(np.float64)
+            got = np.frombuffer(actual, dtype="<i4" if dtype == "int32" else "<f" + str(width)).astype(np.float64)
+            want = np.frombuffer(golden, dtype="<i4" if dtype == "int32" else "<f" + str(width)).astype(np.float64)
             finite = np.isfinite(got) & np.isfinite(want)
             invalid = int(np.count_nonzero(~finite))
             with np.errstate(invalid="ignore", over="ignore"):
@@ -164,7 +165,7 @@ def compare(actual, golden, atol=0, rtol=0, dtype="fp16"):
 def compare_files(actual, golden, atol=0, rtol=0, dtype="fp16"):
     """Compare tensors with bounded memory, including FP32 images larger than 1 GB."""
     if dtype not in DTYPES:
-        raise ValueError("Supported tensor dtypes are fp16 and fp32")
+        raise ValueError("Supported tensor dtypes are fp16, fp32 and int32")
     actual, golden = Path(actual), Path(golden)
     size = actual.stat().st_size
     if size != golden.stat().st_size:
@@ -197,6 +198,12 @@ def files_equal(first, second):
 
 def evaluate(build_dir, results_dir):
     root, case, binding, request = validate_build(build_dir)
+    return evaluate_case(case, binding, request, root / "case", results_dir,
+                         sha256(root / "bundle/execution.json"))
+
+
+def evaluate_case(case, binding, request, case_dir, results_dir, request_sha256):
+    """Portable acceptance shared by the compiler and self-contained board validation."""
     results = Path(results_dir).resolve(strict=True)
     report = json.loads((results / "execution.json").read_text())
     if (
@@ -207,7 +214,7 @@ def evaluate(build_dir, results_dir):
     ):
         raise ValueError("Board did not complete both executions: " + str(report.get("error", report.get("status"))))
     if (
-        report.get("request_sha256") != sha256(root / "bundle/execution.json")
+        report.get("request_sha256") != request_sha256
         or report.get("om_sha256") != binding["om_sha256"]
     ):
         raise ValueError("Board executed a different request/OM")
@@ -222,49 +229,48 @@ def evaluate(build_dir, results_dir):
             or actual.get("acl_dtype") != DTYPES[expected["dtype"]][2]
         ):
             raise ValueError("Board input contract differs: " + expected["name"])
-    output = report.get("output", {})
-    expected = case["outputs"][0]
-    if (
-        output.get("shape") != expected["shape"]
-        or output.get("acl_dtype") != DTYPES[expected["dtype"]][2]
-        or output.get("bytes") != expected["bytes"]
-        or output.get("name") != expected["name"]
-        or output.get("model_name") not in request["output"]["model_names"]
-    ):
-        raise ValueError("Board output descriptor differs from the compiled case")
+    requested = request.get("outputs") or [request["output"]]
+    actual_outputs = report.get("outputs") or [report.get("output", {})]
+    if len(actual_outputs) != len(case["outputs"]) or len(requested) != len(actual_outputs):
+        raise ValueError("Board output count differs from the compiled case")
     rounds = report.get("rounds", [])
     if len(rounds) != 2:
         raise ValueError("Board results require two raw output files")
-    payloads = []
-    for index, item in enumerate(rounds):
-        name = ("actual.bin", "actual_second.bin")[index]
-        if item.get("index") != index + 1 or item.get("file") != name or item.get("sentinel") != (127, 128)[index]:
-            raise ValueError("Board output rounds do not match the execution protocol")
-        path = relative_file(results, name)
-        if (
-            sha256(path) != item.get("sha256")
-            or path.stat().st_size != expected["bytes"]
-            or item.get("bytes") != expected["bytes"]
-        ):
-            raise ValueError("Copied board output changed: " + name)
-        payloads.append(path)
-    golden = relative_file(root / "case", expected["file"])
-    comparisons = [compare_files(raw, golden, case["atol"], case["rtol"], expected["dtype"]) for raw in payloads]
-    same = files_equal(*payloads)
-    passed = same and all(item["passed"] for item in comparisons)
-    return {
-        "schema_version": 1,
-        "status": "passed" if passed else "failed",
-        "operator": case["operator"],
-        "device_execution": "executed",
-        "precision_checked_on": "compiler_host",
-        "om_sha256": binding["om_sha256"],
-        "request_sha256": report["request_sha256"],
-        "dual_sentinel_consistent": same,
-        "comparisons": comparisons,
-        "atol": case["atol"],
-        "rtol": case["rtol"],
-    }
+    comparisons, output_comparisons, consistent = [], {}, True
+    for output_index, (expected, output, declared) in enumerate(zip(case["outputs"], actual_outputs, requested)):
+        if (output.get("shape") != expected["shape"]
+                or output.get("acl_dtype") != DTYPES[expected["dtype"]][2]
+                or output.get("bytes") != expected["bytes"] or output.get("name") != expected["name"]
+                or output.get("model_name") not in declared["model_names"]):
+            raise ValueError("Board output descriptor differs from the compiled case")
+        payloads = []
+        for index, round_ in enumerate(rounds):
+            items = round_.get("outputs") or [round_]
+            if len(items) != len(actual_outputs):
+                raise ValueError("Board output rounds have incomplete tensors")
+            item = items[output_index]
+            suffix = "_" + str(output_index) if output_index else ""
+            name = ("actual", "actual_second")[index] + suffix + ".bin"
+            if (round_.get("index") != index + 1 or item.get("file") != name
+                    or round_.get("sentinel") != (127, 128)[index]):
+                raise ValueError("Board output rounds do not match the execution protocol")
+            path = relative_file(results, name)
+            if (sha256(path) != item.get("sha256") or path.stat().st_size != expected["bytes"]
+                    or item.get("bytes") != expected["bytes"]):
+                raise ValueError("Copied board output changed: " + name)
+            payloads.append(path)
+        golden = relative_file(case_dir, expected["file"])
+        checked = [compare_files(raw, golden, case["atol"], case["rtol"], expected["dtype"]) for raw in payloads]
+        same = files_equal(*payloads)
+        consistent &= same
+        comparisons.extend(checked)
+        output_comparisons[expected["name"]] = {"comparisons": checked, "dual_sentinel_consistent": same}
+    passed = consistent and all(item["passed"] for item in comparisons)
+    return {"schema_version": 1, "status": "passed" if passed else "failed", "operator": case["operator"],
+            "device_execution": "executed", "precision_checked_on": "compiler_host",
+            "om_sha256": binding["om_sha256"], "request_sha256": report["request_sha256"],
+            "dual_sentinel_consistent": consistent, "comparisons": comparisons,
+            "output_comparisons": output_comparisons, "atol": case["atol"], "rtol": case["rtol"]}
 
 
 def remote_target(args):
