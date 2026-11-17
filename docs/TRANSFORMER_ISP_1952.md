@@ -4,21 +4,15 @@
 
 ## 源码与固定合同
 
-基于用户提供的源码版本：
+编译使用以下 Pan-Boyi 仓库版本，部署工具使用 `Pan-Boyi/pypto_1952` 的 `main`：
 
-| 仓库 | 分支 | 基线提交 |
+| 仓库 | 分支 | 已验证提交 |
 |---|---|---|
-| joshjms/pypto-gym | `joshjms/dec-enc-fused` | `8e918608ae77e5ad8bb9bc5295a743c66dc0d874` |
-| joshjms/pypto | `codex/pypto-pro-5101-swiglu` | `5e37784051650994604e05bffba582906b0901f7` |
-| joshjms/pto-isa | `codex/pypto-pro-5101-swiglu` | `62e9893255a8389e6a6fcba1f4d0def20d5217ea` |
+| [Pan-Boyi/pypto](https://gitcode.com/pan-boyi/pypto) | `codex/1952-native-om` | `5e37784051650994604e05bffba582906b0901f7` |
+| [Pan-Boyi/pto-isa](https://gitcode.com/pan-boyi/pto-isa) | `codex/1952-native-om` | `62e9893255a8389e6a6fcba1f4d0def20d5217ea` |
+| [Pan-Boyi/pypto-gym](https://gitcode.com/pan-boyi/pypto-gym) | `codex/1952-transformer-om` | `30a9c4188585e2f75c1ab75df3b3b88009f22d66` |
 
-编译时使用包含本次修复的 gym checkout，provider 位于 `ops/pypto_pro/experimental/ops_transformer/<算子>/provider.py`。PyPTO 和 PTO-ISA 使用上表版本；这两个依赖的源码未做额外修改。更新 PyPTO 后需同时重建、安装 C++ 接口和 Python 绑定，避免混用旧的 `pypto_impl`。
-
-修复版 gym 已发布到 Pan-Boyi 的 `codex/1952-transformer-om` 分支，提交 `30a9c418`：
-
-```bash
-git clone -b codex/1952-transformer-om https://gitcode.com/pan-boyi/pypto-gym.git
-```
+PyPTO 和 PTO-ISA 分别同步了 joshjms 提交到 lim-jiunnbin 仓库的 PR #2，包含它们依赖的先前卷积支持提交，以快进方式合并到上述 1952 分支。两个提交就是 PR 的正式 head，无额外源码修改。gym 使用三个算子的 OM 适配修复版本，provider 位于 `ops/pypto_pro/experimental/ops_transformer/<算子>/provider.py`。这里的 gym 分支与旧 DecEnc/GEMMFusedKernel 流程的 `codex/1952-native-om` 分支不同，应使用独立 checkout。
 
 | 算子 | 默认输入 | OM 输出 | 原始容差 atol / rtol |
 |---|---|---|---|
@@ -37,35 +31,100 @@ git clone -b codex/1952-transformer-om https://gitcode.com/pan-boyi/pypto-gym.gi
 
 ## 编译机出包
 
-先激活自己的编译 Python 环境并 source CANN。三个源码仓可与部署仓放在同级目录。
+以下操作均在编译机进行。首次准备时，使用一个新的工作目录，把四个仓库放在同级：
 
 ```bash
-export PYPTO_SOURCE_ROOT=/源码/pypto
-export PYPTO_GYM_ROOT=/源码/pypto-gym
-export PTO_LIB_PATH=/源码/pto-isa
-export CANN_SDK_ROOT=/编译机/cann
+mkdir -p ~/isp-1952
+cd ~/isp-1952
+git clone -b codex/1952-native-om https://gitcode.com/pan-boyi/pypto.git
+git clone -b codex/1952-native-om https://gitcode.com/pan-boyi/pto-isa.git
+git clone -b codex/1952-transformer-om https://gitcode.com/pan-boyi/pypto-gym.git
+git clone https://github.com/Pan-Boyi/pypto_1952.git
+
+# 固定到上表已验证版本；创建本地分支以便后续开发。
+git -C pypto switch -c isp-pr2-validated 5e37784051650994604e05bffba582906b0901f7
+git -C pto-isa switch -c isp-pr2-validated 62e9893255a8389e6a6fcba1f4d0def20d5217ea
+git -C pypto-gym switch -c isp-om-validated 30a9c4188585e2f75c1ab75df3b3b88009f22d66
+```
+
+已有 checkout 时先保存本地改动，再 `git fetch origin`、切换并快进到对应分支；不要在旧源码目录中直接覆盖有改动的文件。PyPTO 更新后必须同时重建 C++ 接口与 Python 绑定，不能只替换 Python 文件。
+
+使用 Python 3.10+ 编译环境，本次验证为 Python 3.12、CANN 9.2.0。需要系统 C++/CMake/Python 开发工具和可用的第三方依赖缓存或下载源。将 CANN 路径换成编译机实际安装位置：
+
+```bash
+cd ~/isp-1952
+source /实际路径/cann/set_env.sh
+python3.12 -m venv .venv
+source .venv/bin/activate
+export PYTHON="$VIRTUAL_ENV/bin/python"
 export TORCH_DEVICE_BACKEND_AUTOLOAD=0
-source "$CANN_SDK_ROOT/set_env.sh"
+export PYPTO_SOURCE_ROOT="$PWD/pypto"
+export PYPTO_GYM_ROOT="$PWD/pypto-gym"
+export PTO_LIB_PATH="$PWD/pto-isa"
+export CANN_SDK_ROOT=/实际路径/cann
 
-cd /源码/pypto_1952
-for op in dec_enc_fused ffm_fused input_fused; do
-  bash scripts/build_transformer_ops.sh build --op "$op" \
-    --gym-root "$PYPTO_GYM_ROOT" \
-    --toolkit-root "$CANN_SDK_ROOT" --pto-root "$PTO_LIB_PATH" \
-    --target-soc MC62CM12AA --output "out/$op-01"
-done
+python -m pip install 'setuptools>=70.3' pybind11 wheel torch numpy decorator scipy attrs psutil sympy onnx pytest
+cd "$PYPTO_SOURCE_ROOT"
+PYPTO_ALLOW_WHL_BUILD=1 \
+PYPTO_BUILD_EXT_ARGS='--cmake-options="-DBUILD_WITH_CANN=OFF"' \
+  python -m pip install -v -e . --no-build-isolation
+cd ../pypto_1952
+python -m pip install -e . --no-build-isolation
+export PYTHONPATH="$PYPTO_SOURCE_ROOT/python${PYTHONPATH:+:$PYTHONPATH}"
+python -c 'import sys, pypto, pypto_pro_atc; from pypto import pypto_impl; print(sys.executable); print(pypto.__file__); print(pypto_impl.__file__); print(pypto_pro_atc.__file__)'
 ```
 
-每个 `--output` 必须是全新目录；失败不会回退到旧 OM。默认使用八个 block，FFM 与 InputFused 固定 1080×1920。DecEncFused 可在构建时追加 `--height 31 --width 113` 等形状，生成独立静态 OM，用于边界与尾块检查。`PYTHON=/所选环境/bin/python` 可指定编译解释器；脚本不自动切换环境。
+`BUILD_WITH_CANN=OFF` 仅关闭 PyPTO 主机真机运行时构建，设备代码仍使用 CANN 编译。打印的模块路径应指向当前 PyPTO checkout；不要混用旧的 `pypto_impl`。
 
-新出包目录为 `out/<算子>-01/board/`，其中 `runtime.tar.gz` 和 `SHA256SUMS` 搬到板端。输入/golden 由完整形状生成，FFM 比较全部六个输出通道，InputFused 比较全部 17×128 个 features。
-
-已有构建只更新板端脚本时，可重新打包：
+一条命令依次编译三个算子，并生成统一板端测试包：
 
 ```bash
-bash scripts/build_transformer_ops.sh package \
-  --build out/ffm_fused-01 --output out/ffm_fused-board-02
+# 在 pypto_1952 仓库根目录；每次使用新的输出目录。
+bash scripts/build_transformer_suite.sh "$PWD/out/isp-01" \
+  --gym-root "$PYPTO_GYM_ROOT" \
+  --toolkit-root "$CANN_SDK_ROOT" --pto-root "$PTO_LIB_PATH" \
+  --target-soc MC62CM12AA
 ```
+
+每个算子在独立进程中生成输入和完整形状的 golden、编译 native kernel、调用 ATC 生成新 OM、校验 ABI 并打包。任一阶段失败即停止，不复用旧 OM，也不会生成统一成功包。保留至少 3 GB 可用磁盘空间。默认八个 block；FFM 与 InputFused 固定 1080×1920，FFM 比较全部六个输出通道，InputFused 比较全部 17×128 个 features。
+
+产物：
+
+```text
+out/isp-01/
+  dec_enc_fused/           native、ATC 日志、OM、输入、golden 和独立板端包
+  ffm_fused/
+  input_fused/
+  <算子>.log               各算子的编译终端日志
+  board_suite.tar.gz      搬到板端的统一包
+  board_suite.SHA256SUMS   统一包校验和
+```
+
+仍可单独编译一个算子；DecEncFused 还可追加 `--height 31 --width 113` 等静态形状用于尾块检查：
+
+```bash
+bash scripts/build_transformer_ops.sh build --op dec_enc_fused \
+  --gym-root "$PYPTO_GYM_ROOT" \
+  --toolkit-root "$CANN_SDK_ROOT" --pto-root "$PTO_LIB_PATH" \
+  --target-soc MC62CM12AA --output out/dec_enc_fused-01
+```
+
+`PYTHON=/所选环境/bin/python` 可指定编译解释器，脚本不自动切换环境。已有构建只更新板端脚本时，可运行 `bash scripts/build_transformer_ops.sh package --build out/ffm_fused-01 --output out/ffm_fused-board-02`，不会重新编译 OM。
+
+## 板端一次验证三个算子
+
+把 `board_suite.tar.gz` 和 `board_suite.SHA256SUMS` 搬到板端同一全新目录，在该目录执行：
+
+```bash
+sha256sum -c board_suite.SHA256SUMS
+tar -xzf board_suite.tar.gz
+bash board_suite/test_transformer_suite.sh /板端结果/isp-01 \
+  --runtime-env /板端/runtime/set_env.sh --device 0
+```
+
+脚本按 DecEnc、FFM、InputFused 顺序核对各包哈希，解压并调用对应独立验证入口，任一失败立即停止。`--runtime-env` 使用板端自己的环境脚本，环境已配置时可省略。输出根目录必须全新；每个算子的报告在 `/板端结果/isp-01/<算子>/result/validation.json`，日志和原始结果也在该目录下。只有三者均通过，终端才打印 `All three operator tests passed`。板端使用 Python 3.7.9+，不安装编译端 venv。
+
+先做离线包校验时可追加 `--verify-only`；它不会访问 NPU，也不表示实板精度通过。
 
 ## 板端分别执行
 
@@ -123,8 +182,8 @@ bash scripts/static_1952.sh accept --build out/ffm_fused-01 \
 
 ## 验证范围
 
-本地使用 Ubuntu 24.04 AArch64 编译机、CANN 9.2.0、目标 `MC62CM12AA`，实际执行原生设备编译和 ATC。原始分支失败证据、修复后的 native manifest、ATC 日志、OM/运行包 SHA256 随产物保存。
+PR #2 同步前，使用 Ubuntu 24.04 AArch64 编译机、Python 3.12、CANN 9.2.0、目标 `MC62CM12AA`，实际重新执行三个完整形状的原生设备编译和 ATC，并校验所有板端包。PyPTO PR 回归 45 项、PTO-ISA PR 回归 38 项通过。原始分支失败证据、修复后的 native manifest、ATC 日志、OM/运行包 SHA256 随产物保存。
 
-部署框架回归使用合成 ACL，覆盖真实打包、隔离 Python 校验、INT32 输入、双输出执行/比较和未写回输出的失败判定；旧命令的回归使用其原有 gym 测试资产。独立 CPU oracle 回归覆盖权重打包、Q16 bias、DecEnc 区域边界/尾块/零指数以及 FFM sigmoid/green 舍入/独立 Y 通道。CPU 模拟器尚不支持 INT32 位传输/寄存器，reducer 的整段数值回归明确跳过；其 native 编译和 OM 构建仍需通过。
+部署框架 122 项回归通过，使用合成 ACL 覆盖真实打包、隔离 Python 校验、INT32 输入、双输出执行/比较和未写回输出的失败判定；新批量入口还覆盖编译失败停止、板端失败停止、损坏包拒绝和仅校验时不报精度通过。旧命令的回归使用其原有 gym 测试资产。独立 CPU oracle 回归覆盖权重打包、Q16 bias、DecEnc 区域边界/尾块/零指数以及 FFM sigmoid/green 舍入/独立 Y 通道。CPU 模拟器尚不支持 INT32 位传输/寄存器，reducer 的整段数值回归明确跳过；其 native 编译和 OM 构建已通过。
 
 本环境没有执行板端 NPU 验证，也没有测得三个算子在 1952 上的性能；实板精度以以上脚本生成的 `validation.json` 为准。

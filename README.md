@@ -16,7 +16,7 @@
 | 需要 | CANN toolkit/ATC/Bisheng、C++ 工具链、源码版 PyPTO、PTO-ISA、gym、本仓库、Python venv | 匹配的驱动和 AscendCL runtime、Python 3.7.9+ |
 | 采集性能时另需 | SDK 的 `analysis/msprof/msprof.py` 及其依赖 | 可执行的 `msprof` 采集器，例如 `/var/msprof` |
 
-编译机可以没有 NPU。执行机不安装 PyPTO、PTO、gym、ONNX、OPP 或编译工具，也不接收 golden。使用下文双机自动化命令时，内网编译机需能通过 SSH/SCP 访问执行机；本地仿真和构建不需要连接执行机。
+编译机可以没有 NPU。执行机不安装 PyPTO、PTO、gym、ONNX、OPP 或编译工具。普通双机流程在编译机验收；三个 ISP 算子的独立验证包会携带 golden，供板端直接验精度。使用下文双机自动化命令时，内网编译机需能通过 SSH/SCP 访问执行机；本地仿真和构建不需要连接执行机。
 
 编译机和执行机无法直连时，使用 [静态出包与离线测试](docs/OFFLINE_TESTING.md)：`scripts/static_1952.sh build` 在编译机完成构建并生成 `runtime.tar.gz`；板端解压后用 `runtime/run.sh` 执行，生成 `results.tar.gz`；搬回编译机后用 `scripts/static_1952.sh accept` 验精度。全流程不要求 SSH，也不自动切换 Python 环境。
 
@@ -72,7 +72,7 @@ gym 的测试资产不随 wheel 打包，因此要保留 gym **源码 checkout**
 
 GEMMFusedKernel 使用独立的一键入口，见 [GEMMFusedKernel 编译、执行与 profiling](docs/GEMM_FUSED_KERNEL_PROFILE.md)。在编译机配置一次 SSH 和两端工具路径后，运行 `bash scripts/profile_gemm_fused_kernel.sh`，即可完成四个 kernel 编译、OM 构建、上传、执行、数据回收、精度验证、profiling 解析及终端统计打印。算子及 golden 仍来自 gym，不复制进部署仓。
 
-DecEncFused、FFMFused 和 InputFused 使用 [三个 ISP 算子的静态 OM 与板端验证流程](docs/TRANSFORMER_ISP_1952.md)。在编译机运行 `scripts/build_transformer_ops.sh build --op <算子> ...`，将生成的运行包搬到板端，分别执行包内的 `test_dec_enc_fused.sh`、`test_ffm_fused.sh`、`test_input_fused.sh` 即可直接验精度。板端无需安装 PyPTO 或 PyTorch。
+DecEncFused、FFMFused 和 InputFused 使用 [三个 ISP 算子的静态 OM 与板端验证流程](docs/TRANSFORMER_ISP_1952.md)。PyPTO、PTO-ISA 使用 Pan-Boyi 的 `codex/1952-native-om`（已同步上游 PR #2），gym 使用独立的 `codex/1952-transformer-om` checkout。在编译机运行 `scripts/build_transformer_suite.sh NEW_OUTPUT_ROOT ...` 一次编译并打包三个算子；把统一包搬到板端后，运行 `board_suite/test_transformer_suite.sh NEW_RESULT_ROOT --runtime-env /板端/runtime/set_env.sh --device 0`，依次验精度并保存报告。也保留各算子的独立出包和测试入口。板端无需安装 PyPTO 或 PyTorch。
 
 在本仓库根目录执行：
 
