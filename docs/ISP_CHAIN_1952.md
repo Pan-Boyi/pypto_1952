@@ -72,6 +72,16 @@ InputFused 的 `features[0:1]` 和 `features[1:17]` 分别给四路 global head 
 | Local center、contrast | [36,52)，列 0、1 | `tile_bias` | `[16,2,1,1]` |
 | Local 4×4 matrix | [52,68) | `tile_mix` | `[16,4,4,1,1]` |
 
-系数为 `[contrast, center × (1 − contrast)]`，按 FP16 舍入。这使 DecEnc 的 `x × contrast + offset` 对应以 center 为中心的对比度变换。case 记录了这个模型约定及合成参数。若需确认与训练模型一致，可用原模型的亮度公式和实际权重做对照。DecEnc 的另外三个输入是 preprocess 图像、自身的 FP16 卷积权重和 INT32 Q16 bias。
+GEMM 打包顺序是 `[center, contrast]`。桥接只把这两列重排成 DecEnc 接收的 FP16 `[contrast, center]`。DecEnc 的另外三个输入是 preprocess 图像、自身的 FP16 卷积权重和 INT32 Q16 bias。
 
-验证用的是分别可执行的六个 OM。InputFused OM 内含 resize、encoder、reduce，GEMMFusedKernel OM 内含四个计算节点。最新 FFM 直接用 FP16 head 输出做色彩投影。Postprocess 返回 FP16 NV12 排列样本。
+DecEnc 在同一个 OM 内先对 preprocess 输出的 NCHW 图像计算均值，再执行亮度分支：
+
+```python
+gray = 0.299 * x[:, 0:1] + 0.587 * x[:, 1:2] + 0.587 * x[:, 2:3] + 0.114 * x[:, 3:4]
+image_mean = gray.mean(dim=(2, 3), keepdim=True)
+brightness = center + contrast * (x - image_mean)
+```
+
+全局和 16 个局部区域共用这一个整图均值，各自使用 GEMM 预测的 center 与 contrast。灰度乘法和加法的结果逐步舍入到 FP16。八个工作块用 FP32 累加部分和，归约后将均值写回 FP16。亮度分支依次执行 FP16 减法、乘法和加法。均值和部分和只在 DecEnc OM 内部传递。
+
+验证用的是分别可执行的六个 OM。InputFused OM 内含 resize、encoder、reduce，GEMMFusedKernel OM 内含四个计算节点，DecEnc OM 内含灰度部分和、均值归约、ISP 与卷积三个节点。最新 FFM 直接用 FP16 head 输出做色彩投影。Postprocess 返回 FP16 NV12 排列样本。

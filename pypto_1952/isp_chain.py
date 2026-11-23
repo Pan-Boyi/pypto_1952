@@ -56,7 +56,7 @@ def _package(args, output, assets, layout):
 
     transformer = assets.parent
     sources = [transformer / op / (op + '.py') for op in layout.STAGES if op != 'GEMMFusedKernel']
-    sources += [transformer / 'postprocess/reference_nv12.py']
+    sources += [transformer / 'dec_enc_fused/brightness.py', transformer / 'postprocess/reference_nv12.py']
     sources += sorted(assets.glob('*.py'))
     gemm = args.gym_root.resolve() / 'ops/pro/experimental/gemm_fused_kernel'
     sources += [gemm / name for name in ('kernel.py', 'packing.py', 'reference.py', 'provider.py')]
