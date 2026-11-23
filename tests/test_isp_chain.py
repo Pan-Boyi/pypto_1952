@@ -1,5 +1,7 @@
-"""Regression tests for board handoffs, range selection and the final NV12 check."""
+"""Regression tests for the portable single-OM ISP validation package."""
 
+from contextlib import redirect_stderr, redirect_stdout
+import io
 import json
 from pathlib import Path
 import struct
@@ -10,117 +12,115 @@ from unittest.mock import patch
 
 from pypto_1952 import board_chain, host
 
-LAYOUT = SimpleNamespace(STAGES=('preprocess', 'input_fused', 'GEMMFusedKernel',
-                                 'dec_enc_fused', 'ffm_fused', 'postprocess'))
-Y4 = [0.5, 0.625, 0.25, 0.375, 0.125, 0.75, 0.875, 1.]
-UV = [0.5, 0.75, 0.625, 0.25]
-NV12 = [0.5, 0.25, 0.625, 0.375, 0.125, 0.875, 0.75, 1., 0.5, 0.625, 0.75, 0.25]
+SPAN = ('input_fused', 'GEMMFusedKernel', 'dec_enc_fused', 'ffm_fused')
+IMAGE_SHAPE = (1, 4, 1080, 1920)
+BRIGHTNESS_RULE = 'test_mean'
+LAYOUT = SimpleNamespace(STAGES=('preprocess', *SPAN, 'postprocess'), IMAGE_SHAPE=IMAGE_SHAPE,
+                         BRIGHTNESS_RULE=BRIGHTNESS_RULE, selected_stages=lambda start, end: SPAN)
 
 
-def fp16(values):
-    return struct.pack('<' + str(len(values)) + 'e', *values)
+def write_json(path, value):
+    path.write_text(json.dumps(value) + '\n')
 
 
 class ISPChainBoardTests(unittest.TestCase):
     def setUp(self):
         work = tempfile.TemporaryDirectory()
         self.addCleanup(work.cleanup)
-        self.root = Path(work.name)
-        self.manifest = {'brightness_rule': 'test', 'image_shape': [1, 4, 1, 2]}
-        (self.root / 'chain.json').write_text(json.dumps(self.manifest))
-        self.stages = {}
-        self._add_stage('ffm_fused', {'x': ([1, 16, 1, 2], [0.] * 32)},
-                        {'yout': ([1, 4, 1, 2], Y4), 'uvout': ([1, 2, 1, 2], UV)}, 0.003)
-        self._add_stage('postprocess', {'y4': ([1, 4, 1, 2], Y4), 'uv': ([1, 2, 1, 2], UV)},
-                        {'out': ([1, 12], NV12)}, 0.)
+        self.root = Path(work.name) / 'isp_chain'
+        self.root.mkdir()
+        self.output = self.root.parent / 'results'
+        self.output.mkdir()
+        for name in ('run.sh', 'board_chain.py', 'chain_layout.py', 'runner.py', 'acceptance.py'):
+            (self.root / name).touch()
+        (self.root / 'model.om').write_bytes(b'single static OM')
 
-    def _add_stage(self, name, inputs, outputs, atol):
-        directory = self.root / name
-        directory.mkdir()
-        (directory / 'model.om').write_bytes(name.encode())
+        def tensor(name, value):
+            path = self.root / (name + '.bin')
+            path.write_bytes(struct.pack('<e', value))
+            return {'name': name, 'file': path.name, 'bytes': 2, 'shape': [1], 'dtype': 'fp16',
+                    'sha256': host.sha256(path)}
 
-        def records(values):
-            for key, (shape, value) in values.items():
-                path = directory / (key + '.bin')
-                path.write_bytes(fp16(value))
-                yield {'name': key, 'file': path.name, 'bytes': path.stat().st_size,
-                       'shape': shape, 'dtype': 'fp16', 'sha256': host.sha256(path)}
+        case = {'schema_version': 1, 'operator': 'ISPChain', 'inputs': [tensor('input_fused_x', 1.)],
+                'outputs': [tensor('ffm_fused_yout', 0.25), tensor('ffm_fused_uvout', 0.5)],
+                'atol': 0.003, 'rtol': 0.003}
+        self.manifest = {'schema_version': 2, 'kind': 'pypto_1952_isp_chain', 'stages': list(SPAN),
+                         'start': SPAN[0], 'end': SPAN[-1], 'seed': 1, 'image_shape': list(IMAGE_SHAPE),
+                         'brightness_rule': BRIGHTNESS_RULE, 'target_soc': 'MC62CM12AA'}
+        case['configuration'] = dict({key: self.manifest[key] for key in ('seed', 'start', 'end', 'stages')},
+                                     height=1080, width=1920, brightness_rule=BRIGHTNESS_RULE,
+                                     fixture='isp_chain_single_om_fp16')
+        write_json(self.root / 'case.json', case)
+        binding = {'om_sha256': host.sha256(self.root / 'model.om'),
+                   'case_sha256': host.sha256(self.root / 'case.json'), 'runtime_dependencies': 'device_kernel_only',
+                   'target_soc': 'MC62CM12AA',
+                   'output_name_bindings': [{'logical_name': name, 'om_declared_names': [name]}
+                                            for name in ('ffm_fused_yout', 'ffm_fused_uvout')]}
+        write_json(self.root / 'binding.json', binding)
+        request = host.create_execution(self.root / 'case.json', self.root / 'binding.json')
+        write_json(self.root / 'execution.json', request)
+        self._inventory()
 
-        case = {'operator': name, 'inputs': list(records(inputs)), 'outputs': list(records(outputs)),
-                'atol': atol, 'rtol': 0.}
-        binding = {'om_sha256': host.sha256(directory / 'model.om')}
-        request = {'om': {'file': 'model.om', 'sha256': binding['om_sha256']},
-                   'outputs': [{'name': key, 'model_names': [key]} for key in outputs]}
-        self.stages[name] = directory, case, binding, request
+    def _inventory(self):
+        self.manifest['files'] = {p.name: host.sha256(p) for p in self.root.iterdir() if p.name != 'chain.json'}
+        write_json(self.root / 'chain.json', self.manifest)
 
-    def _run(self, start, bad_repack=False):
-        destination = self.root / 'results'
-        destination.mkdir()
-        changed = 0.5 + 1 / 2048 if start == 'ffm_fused' else 0.5
-        actual_y4 = fp16([changed] + Y4[1:])
-        out = [changed] + NV12[1:]
-        if bad_repack:
-            out[1] += 1 / 4096  # within inherited FFM tolerance but incorrect Y packing
-        called = []
+    def _exercise(self, bad_precision=False):
+        manifest, case, binding, request = board_chain.verify_release(self.root, LAYOUT)
 
-        def execute(root, execution, result, device, log_path):
-            del root, device, log_path
-            op = result.parent.name
-            called.append(op)
-            request = json.loads(execution.read_text())
-            _, case, binding, _ = self.stages[op]
-            inputs = [dict(record, sha256=item['sha256'], acl_dtype=1)
-                      for record, item in zip(case['inputs'], request['inputs'])]
-            if op == 'postprocess':
-                payload = execution.parent / request['inputs'][0]['file']
-                self.assertEqual(payload.read_bytes(), actual_y4)
-                self.assertEqual(request['inputs'][0]['sha256'], host.sha256(payload))
-            values = (actual_y4, fp16(UV)) if op == 'ffm_fused' else (fp16(out),)
+        def execute(root, output, device):
+            self.assertEqual(list(root.glob('*.om')), [root / 'model.om'])
+            self.assertEqual(device, 0)
+            result = output / 'results'
             result.mkdir()
             rounds = []
             for index, (stem, sentinel) in enumerate((('actual', 127), ('actual_second', 128)), 1):
                 records = []
-                for i, value in enumerate(values):
-                    path = result / (stem + ('_' + str(i) if i else '') + '.bin')
-                    path.write_bytes(value)
-                    records.append({'file': path.name, 'bytes': len(value), 'sha256': host.sha256(path)})
+                for i, expected in enumerate(case['outputs']):
+                    payload = (root / expected['file']).read_bytes()
+                    if bad_precision and i == 1:
+                        payload = struct.pack('<e', 0.75)
+                    binary = result / (stem + ('_' + str(i) if i else '') + '.bin')
+                    binary.write_bytes(payload)
+                    records.append({'file': binary.name, 'bytes': 2, 'sha256': host.sha256(binary)})
                 rounds.append({'index': index, 'sentinel': sentinel, 'outputs': records})
-            report = {'schema_version': 1, 'kind': 'pypto_pro_execution_result', 'status': 'executed',
-                      'request_sha256': host.sha256(execution), 'om_sha256': binding['om_sha256'],
-                      'execution_calls': 2, 'inputs': inputs,
-                      'outputs': [dict(record, model_name=record['name'], acl_dtype=1) for record in case['outputs']],
-                      'rounds': rounds}
-            (result / 'execution.json').write_text(json.dumps(report))
+            write_json(result / 'execution.json', {
+                'schema_version': 1, 'kind': 'pypto_pro_execution_result', 'status': 'executed',
+                'request_sha256': host.sha256(root / 'execution.json'), 'om_sha256': binding['om_sha256'],
+                'execution_calls': 2, 'inputs': [dict(item, acl_dtype=1) for item in case['inputs']],
+                'outputs': [dict(item, model_name=item['name'], acl_dtype=1) for item in case['outputs']],
+                'rounds': rounds,
+            })
 
-        span = board_chain.selected_stages(LAYOUT, start, 'postprocess')
-        with patch.object(board_chain, '_run_stage', side_effect=execute):
-            verdict = board_chain.run_chain(self.root, destination, self.manifest, self.stages, LAYOUT, span, 0)
-        self.assertEqual(called, list(span))
-        post = json.loads((destination / 'postprocess/validation.json').read_text())
-        return verdict, post
+        with patch.object(board_chain, '_run_model', side_effect=execute) as run:
+            verdict = board_chain.run_chain(self.root, self.output, manifest, case, binding, request, 0)
+        run.assert_called_once_with(self.root, self.output, 0)
+        self.assertEqual(verdict, json.loads((self.output / 'validation.json').read_text()))
+        self.assertEqual(verdict['stages'], list(SPAN))
+        return verdict
 
-    def test_range_uses_actual_inputs_and_requires_exact_nv12_repack(self):
-        verdict, post = self._run('ffm_fused')
+    def test_one_om_compares_both_final_outputs(self):
+        verdict = self._exercise()
         self.assertEqual(verdict['status'], 'passed')
-        self.assertEqual(post['input_sources']['y4']['source'], 'ffm_fused.yout')
-        self.assertEqual(post['atol'], 0.003)
-        self.assertTrue(post['exact_device_yuv_repack']['passed'])
+        self.assertEqual(list(verdict['output_comparisons']), ['ffm_fused_yout', 'ffm_fused_uvout'])
 
-    def test_single_operator_uses_packaged_inputs_and_exact_golden(self):
-        verdict, post = self._run('postprocess')
-        self.assertEqual(verdict['status'], 'passed')
-        self.assertEqual(post['input_sources']['y4']['source'], 'packaged_cpu_input')
-        self.assertEqual(post['atol'], 0.)
+    def test_final_output_mismatch_fails_the_span(self):
+        self.assertEqual(self._exercise(bad_precision=True)['status'], 'failed')
 
-    def test_wrong_repack_fails_even_within_chain_tolerance(self):
-        verdict, post = self._run('ffm_fused', bad_repack=True)
-        self.assertTrue(post['comparisons'][0]['passed'])
-        self.assertEqual(verdict['first_failed'], 'postprocess')
-        self.assertEqual(verdict['status'], 'failed')
+    def test_multiple_oms_rejected_even_if_listed_in_inventory(self):
+        (self.root / 'additional.om').write_bytes(b'extra OM')
+        self._inventory()
+        with self.assertRaisesRegex(ValueError, 'exactly one model.om'):
+            board_chain.verify_release(self.root, LAYOUT)
 
-    def test_reversed_ranges_fail(self):
-        with self.assertRaisesRegex(ValueError, '--start must be at or before --end'):
-            board_chain.selected_stages(LAYOUT, 'postprocess', 'ffm_fused')
+    def test_board_flags_only_check_compiled_endpoints(self):
+        with patch.object(board_chain, '__file__', str(self.root / 'board_chain.py')):
+            with redirect_stdout(io.StringIO()) as stdout:
+                self.assertEqual(board_chain.main(LAYOUT, ['--verify-only']), 0)
+            self.assertEqual(json.loads(stdout.getvalue())['selected_stages'], list(SPAN))
+            with redirect_stderr(io.StringIO()) as stderr:
+                self.assertEqual(board_chain.main(LAYOUT, ['--verify-only', '--end', 'postprocess']), 1)
+            self.assertIn('must match the compiled span', stderr.getvalue())
 
 
 if __name__ == '__main__':

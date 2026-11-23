@@ -1,12 +1,14 @@
-# 六算子 FP16 串联验证
+# 1952 FP16 ISP 单 OM 验证
 
-编译机为每个算子生成一个 1952 静态 OM。用一个确定性的 1080×1920 测试样本生成整条 CPU golden。板端一次执行一个 OM，把返回的实板输出交给下一级，并逐级对比 CPU golden。
+编译机根据 `--start` 和 `--end` 生成一个 1952 静态 OM，包含两个端点及其之间的算子。整链图包含六个算子和两个设备侧布局转换节点。板端每轮只执行这个 OM，中间张量在设备 GM 交接，回读 `end` 的输出与同一条 1080×1920 CPU golden 链比较。
 
 ```mermaid
 flowchart LR
     A[preprocess] -->|FP16 图像| B[input_fused]
-    B -->|"全局 1×128 + 局部 16×128"| C[GEMMFusedKernel]
-    C -->|"八组 FP16 ISP 系数"| D[dec_enc_fused]
+    B -->|"FP16 17×128"| F1[设备侧拆分特征]
+    F1 -->|"全局 1×128 + 局部 16×128"| C[GEMMFusedKernel]
+    C -->|"FP16 68×16"| F2[设备侧解包参数]
+    F2 -->|"八组 FP16 ISP 系数"| D[dec_enc_fused]
     A -->|"同一张 FP16 图像"| D
     D --> E[ffm_fused]
     E -->|FP16 Y4 与 UV| F[postprocess]
@@ -24,10 +26,13 @@ bash scripts/build_isp_chain.sh \
   --toolkit-root "$CANN_SDK_ROOT" \
   --pto-root "$PTO_LIB_PATH" \
   --target-soc MC62CM12AA \
-  --output "$PWD/out/isp-chain-01"
+  --start preprocess --end postprocess \
+  --output "$PWD/out/isp-chain-full"
 ```
 
-构建日志、ATC 审计和各 OM 位于输出目录。出包会核对 OM 的原生张量 ABI，并把六份 CPU case 的每条数据连接逐字节核对。把 `isp_chain.tar.gz` 与 `isp_chain.SHA256SUMS` 一起搬到板端。
+默认区间为 `preprocess → postprocess`。指定 `--start input_fused --end ffm_fused` 会生成包含 InputFused、GEMM、DecEnc 和 FFM 的一个 OM。指定 `--start dec_enc_fused --end dec_enc_fused` 会生成只包含 DecEnc 的一个 OM。
+
+出包会核对 OM 的原生张量 ABI 和区间输入输出。目录内的模型是 `isp_chain/model.om`，编译日志在 `build.log`，ATC 日志和审计在 `build_evidence/`。把 `isp_chain.tar.gz` 与 `isp_chain.SHA256SUMS` 一起搬到板端。
 
 ## 板端执行
 
@@ -39,23 +44,18 @@ tar -xzf isp_chain.tar.gz
 bash isp_chain/run.sh --verify-only
 ```
 
-选择一段测试，示例从 InputFused 开始到 FFM 结束：
+执行编译时选定的区间：
 
 ```bash
 bash isp_chain/run.sh --runtime-env /actual/board/set_env.sh \
-  --start input_fused --end ffm_fused --device 0 --output /tmp/isp-input-to-ffm
+  --device 0 --output /tmp/isp-result
 ```
 
-只测 DecEnc：
+板端环境已加载时可省略 `--runtime-env`。板端也可传 `--start/--end` 校验包的端点。选择另一个区间时，在编译机用该区间重新出包。
 
-```bash
-bash isp_chain/run.sh --runtime-env /actual/board/set_env.sh \
-  --start dec_enc_fused --end dec_enc_fused --device 0 --output /tmp/isp-dec-enc
-```
+区间外的前序结果由编译端 CPU golden 生成，并打包为外部输入。例如从 InputFused 开始时，InputFused 和 DecEnc 共用包里的一份 preprocess 图像。从 preprocess 开始时，两处共用它的设备 GM 输出。
 
-省略 `--start/--end` 执行整段。板端环境已加载时可省略 `--runtime-env`。执行区间中的输入优先使用已运行算子的实板输出，区间外的前序输入使用同一串联 CPU case 的数据。例如从 InputFused 开始时，InputFused 和后面的 DecEnc 都使用打包的 preprocess golden 图像。从 preprocess 开始时，两处都使用其实际板端输出。
-
-每个 OM 用两种哨兵预填输出，并各执行一次。结果目录的 `validation.json` 记录首个失败阶段和总结果。各算子子目录保留输入来源与哈希、执行日志、输出和逐张量误差。有限且完整的稳定输出即使超差也会传到下一级，以便看到后续误差。ACL 错误、未完整写入或非有限输出会中止链路。Postprocess 单测按零容差比较，在串联时额外对实际 FFM 的 Y4/UV 做零容差重排比较，其端到端比较沿用 FFM 的容差。
+测试用两种哨兵预填输出，每轮执行一次同一个 OM。`validation.json` 记录编译区间、OM 哈希和每个最终输出的误差。结果目录还保留 ACL 日志和两轮输出。单独验证 Postprocess 时使用零容差，区间内包含 FFM 时，NV12 的端到端比较沿用 FFM 容差。
 
 ## GEMMFusedKernel 到 DecEnc
 
@@ -72,7 +72,9 @@ InputFused 的 `features[0:1]` 和 `features[1:17]` 分别给四路 global head 
 | Local center、contrast | [36,52)，列 0、1 | `tile_bias` | `[16,2,1,1]` |
 | Local 4×4 matrix | [52,68) | `tile_mix` | `[16,4,4,1,1]` |
 
-GEMM 打包顺序是 `[center, contrast]`。桥接只把这两列重排成 DecEnc 接收的 FP16 `[contrast, center]`。DecEnc 的另外三个输入是 preprocess 图像、自身的 FP16 卷积权重和 INT32 Q16 bias。
+第 4、8 路对第二层 GEMM 加 bias 后的 16 个 FP16 值逐元素执行 `tanh`，按 4×4 排列，乘以 `0.15` 后加单位矩阵。
+
+GEMM 打包顺序是 `[center, contrast]`。设备侧解包节点在 GM 中生成 DecEnc 接收的 FP16 `[contrast, center]`。DecEnc 的另外三个输入是 preprocess 图像、自身的 FP16 卷积权重和 INT32 Q16 bias。
 
 DecEnc 在同一个 OM 内先对 preprocess 输出的 NCHW 图像计算均值，再执行亮度分支：
 
@@ -84,4 +86,4 @@ brightness = center + contrast * (x - image_mean)
 
 全局和 16 个局部区域共用这一个整图均值，各自使用 GEMM 预测的 center 与 contrast。灰度乘法和加法的结果逐步舍入到 FP16。八个工作块用 FP32 累加部分和，归约后将均值写回 FP16。亮度分支依次执行 FP16 减法、乘法和加法。均值和部分和只在 DecEnc OM 内部传递。
 
-验证用的是分别可执行的六个 OM。InputFused OM 内含 resize、encoder、reduce，GEMMFusedKernel OM 内含四个计算节点，DecEnc OM 内含灰度部分和、均值归约、ISP 与卷积三个节点。最新 FFM 直接用 FP16 head 输出做色彩投影。Postprocess 返回 FP16 NV12 排列样本。
+InputFused 包含 resize、encoder、reduce 三个节点，GEMMFusedKernel 包含四个计算节点，DecEnc 包含灰度部分和、均值归约、ISP 与卷积三个节点。全区间 OM 共 15 个原生节点，含两个布局转换节点。FFM 直接用 FP16 head 输出做色彩投影，Postprocess 返回 FP16 NV12 排列样本。

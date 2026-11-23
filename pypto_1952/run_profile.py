@@ -153,14 +153,14 @@ def build(args):
         if spec.get("pass_options"):
             import pypto
             context = pypto.options(pass_options=spec["pass_options"])
+        kernel_options = {"block_dim": spec.get("block_dim", 1), **spec.get("kernel_options", {}).get(name, {})}
         with context:
             native = compile_device_kernel(
                 kernel,
                 output / "native" / name if graph else output / "native",
                 toolkit_root=args.toolkit_root,
                 pto_root=args.pto_root,
-                block_dim=spec.get("block_dim", 1),
-                **spec.get("kernel_options", {}).get(name, {}),
+                **kernel_options,
             )
         if spec.get("annotate_manifest"):
             manifest = json.loads(native.read_text())
