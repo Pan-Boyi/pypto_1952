@@ -11,19 +11,20 @@ import tarfile
 import tempfile
 
 from . import board_chain, host
-from .provider import load_provider
+from .isp_1952_validation import GEMM_KERNEL, ROOT, TRANSFORMER_ROOT, chain_layout as layout
+from .provider import resolve_gym_root
 
 HERE = Path(__file__).resolve().parent
-VALIDATION = Path('ops/pypto_pro/experimental/ops_transformer/isp_1952_validation')
 
 
-def _compile(args, output, work, assets, layout, stages):
+def _compile(args, output, work, stages):
     config = work / 'span.json'
     config.write_text(json.dumps({'start': stages[0], 'end': stages[-1], 'seed': args.seed}) + '\n')
     _, _, height, width = layout.IMAGE_SHAPE
     build = work / 'build'
     command = [sys.executable, '-B', '-m', 'pypto_1952.run_profile', 'build',
-               '--op', 'ISPChain', '--provider', str(assets / 'chain_provider.py'), '--case-config', str(config),
+               '--op', 'ISPChain', '--provider', str(ROOT / 'chain_provider.py'), '--case-config', str(config),
+               '--gym-root', str(args.gym_root),
                '--toolkit-root', str(args.toolkit_root), '--pto-root', str(args.pto_root),
                '--target-soc', args.target_soc, '--height', str(height), '--width', str(width),
                '--dtype', 'fp16', '--block-dim', '8', '--output', str(build)]
@@ -44,33 +45,30 @@ def _compile(args, output, work, assets, layout, stages):
     return build
 
 
-def _package(args, output, work, build, assets, layout, stages):
+def _package(args, output, work, build, stages):
     build, case, _, _ = host.validate_build(build)
     release = work / 'isp_chain'
     release.mkdir()
     for source, name in ((HERE.parent / 'scripts/board/test_isp_chain.sh', 'run.sh'),
                          (HERE / 'board_chain.py', 'board_chain.py'),
                          (HERE / 'host.py', 'acceptance.py'),
-                         (assets / 'chain_layout.py', 'chain_layout.py')):
+                         (ROOT / 'chain_layout.py', 'chain_layout.py')):
         shutil.copy2(source, release / name)
     for name in ('model.om', 'runner.py', 'execution.json'):
         shutil.copy2(build / 'bundle' / name, release / name)
     for name in ['case.json', 'binding.json'] + [r['file'] for r in case['inputs'] + case['outputs']]:
         shutil.copy2(host.relative_file(build / 'case', name), release / name)
 
-    transformer = assets.parent
-    sources = [transformer / op / (op + '.py') for op in layout.STAGES if op != 'GEMMFusedKernel']
-    sources += [transformer / 'dec_enc_fused/brightness.py', transformer / 'postprocess/reference_nv12.py']
-    sources += sorted(assets.glob('*.py'))
-    gym = args.gym_root.resolve()
-    gemm = gym / 'ops/pro/experimental/gemm_fused_kernel'
-    sources += [gemm / name for name in ('kernel.py', 'packing.py', 'reference.py', 'provider.py')]
+    sources = [TRANSFORMER_ROOT / op / (op + '.py') for op in layout.STAGES if op != 'GEMMFusedKernel']
+    sources += [TRANSFORMER_ROOT / 'dec_enc_fused/brightness.py', GEMM_KERNEL]
     manifest = {'schema_version': 2, 'kind': 'pypto_1952_isp_chain', 'stages': list(stages),
                 'start': stages[0], 'end': stages[-1], 'image_shape': list(layout.IMAGE_SHAPE),
                 'seed': args.seed, 'target_soc': args.target_soc, 'brightness_rule': layout.BRIGHTNESS_RULE,
                 'compiler_host': {'machine': platform.machine(), 'python': platform.python_version(),
                                   'toolkit_root': str(args.toolkit_root.resolve())},
-                'gym_source_sha256': {str(path.relative_to(gym)): host.sha256(path) for path in sources},
+                'gym_source_sha256': {str(path): host.sha256(args.gym_root / path) for path in sources},
+                'deployment_source_sha256': {str(path.relative_to(HERE)): host.sha256(path)
+                                             for path in sorted(ROOT.rglob('*.py'))},
                 'files': {path.relative_to(release).as_posix(): host.sha256(path)
                           for path in sorted(release.iterdir()) if path.is_file()}}
     (release / 'chain.json').write_text(json.dumps(manifest, indent=2) + '\n')
@@ -100,15 +98,14 @@ def main(argv=None):
     parser.add_argument('--output', type=Path, required=True, help='New output directory')
     args = parser.parse_args(argv)
     try:
-        assets = args.gym_root.resolve(strict=True) / VALIDATION
-        _, layout = load_provider(assets / 'chain_layout.py')
+        args.gym_root = resolve_gym_root(args.gym_root)
         stages = layout.selected_stages(args.start, args.end)
         output = args.output.expanduser().resolve()
         output.mkdir(parents=True, exist_ok=False)
         with tempfile.TemporaryDirectory(prefix='.compiler-', dir=output) as temporary:
             work = Path(temporary)
-            build = _compile(args, output, work, assets, layout, stages)
-            _package(args, output, work, build, assets, layout, stages)
+            build = _compile(args, output, work, stages)
+            _package(args, output, work, build, stages)
         return 0
     except subprocess.CalledProcessError:
         print('ISP chain build failed. See ' + str(output / 'build.log'), file=sys.stderr)

@@ -4,6 +4,8 @@
 
 ## 源码与固定合同
 
+下表记录三个算子首次独立出包时的固定版本。使用最新 `codex/1952-isp-chain` 的 kernel 源码时，编译入口相同，自动使用部署仓中的 provider 和 golden。最新分支及环境见 [六算子单 OM 验证](ISP_CHAIN_1952.md)。
+
 编译使用以下 Pan-Boyi 仓库版本，部署工具使用 `Pan-Boyi/pypto_1952` 的 `main`：
 
 | 仓库 | 分支 | 已验证提交 |

@@ -9,6 +9,8 @@ import sys
 import tarfile
 
 from . import host, offline, offline_run
+from .isp_1952_validation import ROOT, TRANSFORMER_ROOT
+from .provider import resolve_gym_root
 
 HERE = Path(__file__).resolve().parent
 OPERATORS = ('dec_enc_fused', 'ffm_fused', 'input_fused')
@@ -62,8 +64,11 @@ def main(argv=None):
             if args.op is None:
                 parser.error('build requires --op')
             from .run_profile import main as build
-            provider = args.gym_root.resolve() / 'ops/pypto_pro/experimental/ops_transformer' / args.op / 'provider.py'
-            arguments = ['build', '--provider', str(provider), '--op', args.op, '--height', '1080', '--width', '1920',
+            gym = resolve_gym_root(args.gym_root)
+            legacy = gym / TRANSFORMER_ROOT / args.op / 'provider.py'
+            provider = legacy if legacy.is_file() else ROOT / 'provider.py'
+            arguments = ['build', '--provider', str(provider), '--gym-root', str(gym),
+                         '--op', args.op, '--height', '1080', '--width', '1920',
                          '--block-dim', '8', '--output', str(args.output), *extra]
             if build(arguments):
                 return 1

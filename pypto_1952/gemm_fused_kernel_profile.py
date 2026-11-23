@@ -11,6 +11,7 @@ import sys
 import uuid
 
 from . import dec_enc_profile as common
+from .isp_1952_validation import GEMM_KERNEL, ROOT
 
 REPO = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = Path(__file__).with_name("gemm_fused_kernel_profile.local.json")
@@ -24,11 +25,18 @@ def load_config(path):
     if type(config["block_dim"]) is not int or not 1 <= config["block_dim"] <= 8:
         raise ValueError("block_dim 必须是 1..8 的整数")
     if config["provider"] is None:
-        config["provider"] = config["gym_root"] / "ops/pro/experimental/gemm_fused_kernel/provider.py"
+        source = config["gym_root"] / GEMM_KERNEL
+        legacy = source.with_name("provider.py")
+        if legacy.is_file():
+            config["provider"] = legacy
+        elif source.is_file():
+            config["provider"] = ROOT / "gemm_fused_kernel/provider.py"
+        else:
+            raise ValueError("找不到 GEMMFusedKernel 源码: " + str(source))
     else:
         config["provider"] = common._local_path(config["provider"], path.parent)
     if not config["provider"].is_file():
-        raise ValueError("找不到 GEMMFusedKernel provider，请更新 gym checkout 或填写 provider: " + str(config["provider"]))
+        raise ValueError("找不到 GEMMFusedKernel provider: " + str(config["provider"]))
     return config
 
 
@@ -78,6 +86,7 @@ def execute(config):
         common._board_preflight(config, root / "preflight.log")
         state["stage"] = "build"
         build = ["build", "--provider", str(config["provider"]), "--op", "GEMMFusedKernel",
+                 "--gym-root", str(config["gym_root"]),
                  "--dtype", "fp16", "--block-dim", str(config["block_dim"]),
                  "--toolkit-root", str(config["toolkit_root"]), "--pto-root", str(config["pto_root"]),
                  "--output", str(root / "build")]

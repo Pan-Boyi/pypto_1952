@@ -2,7 +2,7 @@
 
 这个仓库把已经写好的 Pro 算子编译成静态 OM，上传到 5102 执行，再把输出和性能数据取回编译机。
 
-算子只维护一份，放在 **pypto-gym**；输入生成、golden 和误差标准也在那里。本仓库负责调用、打包、传输、执行和性能统计。框架的设备导出、ONNX/ATC 接入在 **PyPTO**，底层指令支持在 **PTO-ISA**。
+六个 FP16 ISP 独立算子实现在 **pypto-gym**。本仓库维护对应的输入生成、golden、测试、静态 OM provider、串联桥接和板端流程。框架的设备导出和 ONNX/ATC 接入在 **PyPTO**，底层指令支持在 **PTO-ISA**。
 
 双方适配的合并内容、五部分提交和验证记录见 [5102 合并与验证](docs/MERGED_5102.md)。新运行包尚未实板执行。
 
@@ -70,11 +70,11 @@ gym 的测试资产不随 wheel 打包，因此要保留 gym **源码 checkout**
 
 ## 2. 直接测试已有 DecEnc
 
-GEMMFusedKernel 使用独立的一键入口，见 [GEMMFusedKernel 编译、执行与 profiling](docs/GEMM_FUSED_KERNEL_PROFILE.md)。在编译机配置一次 SSH 和两端工具路径后，运行 `bash scripts/profile_gemm_fused_kernel.sh`，即可完成四个 kernel 编译、OM 构建、上传、执行、数据回收、精度验证、profiling 解析及终端统计打印。算子及 golden 仍来自 gym，不复制进部署仓。
+GEMMFusedKernel 使用独立的一键入口，见 [GEMMFusedKernel 编译、执行与 profiling](docs/GEMM_FUSED_KERNEL_PROFILE.md)。在编译机配置一次 SSH 和两端工具路径后，运行 `bash scripts/profile_gemm_fused_kernel.sh`，即可完成四个 kernel 编译、OM 构建、上传、执行、数据回收、精度验证、profiling 解析及终端统计打印。部署仓的 provider 从 `gym_root` 加载 kernel。
 
 DecEncFused、FFMFused 和 InputFused 使用 [三个 ISP 算子的静态 OM 与板端验证流程](docs/TRANSFORMER_ISP_1952.md)。PyPTO、PTO-ISA 使用 Pan-Boyi 的 `codex/1952-native-om`（已同步上游 PR #2），gym 使用独立的 `codex/1952-transformer-om` checkout。在编译机运行 `scripts/build_transformer_suite.sh NEW_OUTPUT_ROOT ...` 一次编译并打包三个算子；把统一包搬到板端后，运行 `board_suite/test_transformer_suite.sh NEW_RESULT_ROOT --runtime-env /板端/runtime/set_env.sh --device 0`，依次验精度并保存报告。也保留各算子的独立出包和测试入口。板端无需安装 PyPTO 或 PyTorch。
 
-[六算子 FP16 串联验证](docs/ISP_CHAIN_1952.md) 使用本地 `codex/1952-isp-chain` 分支的 gym 和部署框架。编译端生成六个独立 OM 和一套串联 golden。板端的 `--start`、`--end` 选择闭区间，相同时只执行一个算子。
+[六算子 FP16 串联验证](docs/ISP_CHAIN_1952.md) 使用两个仓的 `codex/1952-isp-chain` 分支。在编译端选择 `--start` 和 `--end`，生成包含所选区间的一个静态 OM。板端执行这一个 OM，回读最终输出验精度。
 
 在本仓库根目录执行：
 
@@ -147,7 +147,7 @@ python -m pypto_1952.dec_enc_matrix --phase build --matrix smoke \
 
 ## 4. 已完成的新 Pro 算子怎么接入
 
-算子实现和正确性资产继续放在 gym。给它提供一个测试 provider 文件即可，本仓库不需要加入新算子的计算代码或 golden。
+通过 `--provider` 接入自定义编译、用例生成和绑定逻辑。provider 可以通过 `--gym-root` 加载对应的算子源码。
 
 provider 暴露 `build_spec(config)`，返回：
 
@@ -193,4 +193,4 @@ python -m pypto_1952 build \
 python -m unittest discover -s tests -v
 ```
 
-框架回归留在 PyPTO/PTO-ISA；算子数值和 golden 测试位于 gym。当前迁移验证记录见 [docs/REPOSITORY_SPLIT.md](docs/REPOSITORY_SPLIT.md)。
+六算子的数值和组图测试位于本仓的 `tests/isp_1952/`。旧版三仓验证见 [仓库迁移记录](docs/REPOSITORY_SPLIT.md)。

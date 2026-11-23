@@ -181,15 +181,17 @@ class OfflineTests(unittest.TestCase):
         args_file = self.root / "args.txt"
         selected.write_text('#!/bin/sh\nprintf "%s\\n" "$PWD" "$@" > "$OFFLINE_TEST_ARGS"\n')
         selected.chmod(0o755)
+        gym = self.root / "gym checkout"
         environment = dict(os.environ, PYTHON=str(selected), OFFLINE_TEST_ARGS=str(args_file),
-                           PYPTO_1952_ROOT=str(repo), PYPTO_PRO_TOOLKIT_ROOT="/sdk path", PTO_LIB_PATH="/pto path")
-        gym = repo.parent / "pypto-gym/ops/pro/experimental/gemm_fused_kernel"
-        command = ["bash", str(gym / "scripts/test_static_1952.sh"), "build", "--output", "/new build"]
+                           PYPTO_GYM_ROOT=str(gym), PYPTO_PRO_TOOLKIT_ROOT="/sdk path", PTO_LIB_PATH="/pto path")
+        command = ["bash", str(repo / "scripts/test_gemm_fused_kernel.sh"), "build", "--output", "/new build"]
         result = subprocess.run(command, cwd=self.root, env=environment, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         arguments = args_file.read_text().splitlines()
         self.assertEqual(arguments[:5], [str(repo), "-B", "-m", "pypto_1952.offline", "build"])
-        self.assertEqual(arguments[arguments.index("--provider") + 1], str(gym / "provider.py"))
+        provider = repo / "pypto_1952/isp_1952_validation/gemm_fused_kernel/provider.py"
+        self.assertEqual(arguments[arguments.index("--provider") + 1], str(provider))
+        self.assertEqual(arguments[arguments.index("--gym-root") + 1], str(gym))
         self.assertEqual(arguments[arguments.index("--toolkit-root") + 1], "/sdk path")
         self.assertEqual(arguments[arguments.index("--output") + 1], "/new build")
 

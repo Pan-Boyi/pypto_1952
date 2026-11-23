@@ -266,8 +266,8 @@ def main(argv=None):
     commands = parser.add_subparsers(dest="command", required=True)
     compiler = commands.add_parser("build", help="Compile one Pro operator into a fresh runtime bundle")
     compiler.add_argument("--op", required=True, help="Operator name accepted by the gym provider")
-    compiler.add_argument("--provider", type=Path, help="Gym test provider.py; defaults to the native_5102 suite")
-    compiler.add_argument("--gym-root", type=Path, help="Source checkout containing the operator and golden")
+    compiler.add_argument("--provider", type=Path, help="Compiler provider.py; defaults to the gym native_5102 suite")
+    compiler.add_argument("--gym-root", type=Path, help="Gym checkout containing the operator source")
     compiler.add_argument("--case-config", type=Path, help="JSON options passed to an existing custom provider")
     compiler.add_argument(
         "--dec-enc-schedule",

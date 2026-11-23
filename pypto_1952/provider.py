@@ -1,4 +1,4 @@
-"""Load operator test assets from a gym checkout, independently of the working directory."""
+"""Resolve gym sources and load compiler providers independently of the working directory."""
 
 import hashlib
 import importlib.util
@@ -7,10 +7,14 @@ from pathlib import Path
 import sys
 
 
+def resolve_gym_root(path=None):
+    root = path or os.environ.get("PYPTO_GYM_ROOT") or Path(__file__).resolve().parents[2] / "pypto-gym"
+    return Path(root).expanduser().resolve()
+
+
 def load_provider(path=None, gym_root=None):
     if path is None:
-        root = Path(gym_root or os.environ.get("PYPTO_GYM_ROOT") or Path(__file__).resolve().parents[2] / "pypto-gym")
-        path = root / "ops/pro/experimental/native_5102/tests/provider.py"
+        path = resolve_gym_root(gym_root) / "ops/pro/experimental/native_5102/tests/provider.py"
     path = Path(path).expanduser().resolve(strict=True)
     source = path.read_bytes()
     digest = hashlib.sha256(source).hexdigest()

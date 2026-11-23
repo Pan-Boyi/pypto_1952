@@ -105,6 +105,7 @@ class GEMMFusedKernelProfileTests(unittest.TestCase):
             output = Path(arguments[arguments.index("--output") + 1])
             if arguments[0] == "build":
                 self.assertEqual(arguments[arguments.index("--provider") + 1], str(self.provider))
+                self.assertEqual(arguments[arguments.index("--gym-root") + 1], str(config["gym_root"]))
                 self.assertEqual(arguments[arguments.index("--op") + 1], "GEMMFusedKernel")
                 self.assertEqual(arguments[arguments.index("--block-dim") + 1], "8")
                 self.assertNotIn("--build-dir", arguments)
@@ -135,13 +136,17 @@ class GEMMFusedKernelProfileTests(unittest.TestCase):
         self.assertEqual(config["toolkit_root"], self.toolkit)
         self.assertEqual(config["msprof_py"], self.parser)
 
-    def test_default_gym_provider_and_config_validation(self):
+    def test_default_provider_accepts_kernel_only_and_legacy_checkouts(self):
         self.exporter()
         default_provider = self.root / "gym/ops/pro/experimental/gemm_fused_kernel/provider.py"
         default_provider.parent.mkdir(parents=True)
         default_provider.write_text("# fixture\n")
         self.config_path.write_text(json.dumps({**self.raw, "provider": None}))
         self.assertEqual(profile.load_config(self.config_path)["provider"], default_provider)
+        default_provider.unlink()
+        default_provider.with_name("kernel.py").write_text("# kernel-only checkout\n")
+        self.assertEqual(profile.load_config(self.config_path)["provider"],
+                         profile.ROOT / "gemm_fused_kernel/provider.py")
         for field in ({"block_dim": 0}, {"block_dim": True}, {"provider": "/missing.py"},
                       {"password": "not a supported config field"}, {"build_dir": "missing-cmake"}):
             self.config_path.write_text(json.dumps({**self.raw, **field}))

@@ -18,6 +18,8 @@ flowchart LR
 
 从 Pan-Boyi 的本地 `codex/1952-isp-chain` 分支使用 pypto-gym 和本部署仓。PyPTO 使用 `codex/1952-native-om` 的 `62956df3f`（含动态 shape 冻结和 DAV5102 mutex 适配），PTO-ISA 使用同名分支的 `62e98932`。环境准备与 PyPTO 源码安装见 [编译机环境](TRANSFORMER_ISP_1952.md#编译机出包)，其中源码分支和提交以上述版本为准。
 
+部署仓的 `pypto_1952/isp_1952_validation/` 包含 provider、golden、布局和串联桥接。使用 `--gym-root` 指向六个独立 kernel 的源码 checkout。编译机上的数值和组图测试使用 `PYPTO_GYM_ROOT=/源码/pypto-gym python -B -m pytest -q tests/isp_1952`。
+
 激活编译环境，加载本机 CANN toolkit，在部署仓运行：
 
 ```bash

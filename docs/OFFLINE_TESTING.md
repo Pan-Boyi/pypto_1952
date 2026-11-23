@@ -1,6 +1,6 @@
 # 静态出包与离线测试：编译、执行环境分离
 
-本流程不要求编译机访问板卡，也不调用 SSH/SCP。通用脚本在 `pypto_1952`；算子、输入生成、golden 和误差阈值仍由 gym 的 provider 提供。新算子无需改 PyPTO 或 PTO-ISA，前提是其操作和静态导出 ABI 已支持。
+本流程支持离线搬包。编译和执行脚本在 `pypto_1952`。对于最新 GEMMFusedKernel，gym 提供 kernel 源码，部署仓提供输入生成、golden 和误差阈值。通用入口也接受自定义 provider。
 
 | 环境 | 工作和依赖 |
 |---|---|
@@ -33,14 +33,14 @@ bash scripts/static_1952.sh build \
 
 `build` 完整复用原 `test_1952.sh build` 的参数和编译实现，再自动执行离线打包。首次源码配置按仓库 README 安装。只有需要增量更新当前源码 checkout 的 C++ 扩展时才传 `--build-dir "$PYPTO_SOURCE_ROOT/build"`，不强制它作为已安装环境的前置条件。
 
-GEMMFusedKernel 在 gym 有专用入口，自动选择 provider、op、dtype 和默认 8-block 调度：
+GEMMFusedKernel 在部署仓有专用入口，自动选择 provider、op、dtype 和默认 8-block 调度：
 
 ```bash
-bash "$PYPTO_GYM_ROOT/ops/pro/experimental/gemm_fused_kernel/scripts/test_static_1952.sh" \
+bash scripts/test_gemm_fused_kernel.sh \
   build --output /产物/gemm-fused-kernel-fp16-b8-01
 ```
 
-该入口从上述 `PYPTO_PRO_TOOLKIT_ROOT` / `PTO_LIB_PATH` 取工具链路径，或者显式传 `--toolkit-root` / `--pto-root`。用 `--block-dim 4` 和另一个全新 `--output` 构建 4-block 版本。默认同级布局中可不设置 `PYPTO_1952_ROOT`。可从任意工作目录调用，`--output` 的相对路径相对于部署仓根目录。
+该入口从上述 `PYPTO_GYM_ROOT`、`PYPTO_PRO_TOOLKIT_ROOT` 和 `PTO_LIB_PATH` 取路径，也可显式传 `--gym-root`、`--toolkit-root` 和 `--pto-root`。用 `--block-dim 4` 和另一个全新 `--output` 构建 4-block 版本。`--output` 的相对路径相对于部署仓根目录。
 
 任意其他 provider 直接使用通用入口：
 
@@ -132,7 +132,7 @@ bash scripts/static_1952.sh accept \
   --output /产物/gemm-fused-kernel-check-01
 ```
 
-也可用 gym 算子脚本的 `accept` 子命令，参数相同。验收复用原 `host.evaluate`，检查实际运行的 OM/request、输入/输出合同、双哨兵一致性及有限性，最后和编译侧 golden 按阈值比较。若有重复计时，还检查调用计数和最终输出精度；通过后才给出 whole-OM 主机时间分布。
+也可用 `scripts/test_gemm_fused_kernel.sh accept`，参数相同。验收复用原 `host.evaluate`，检查实际运行的 OM/request、输入输出合同、双哨兵一致性及有限性，最后和编译侧 golden 按阈值比较。若有重复计时，还检查调用计数和最终输出精度，通过后给出 whole-OM 主机时间分布。
 
 结果保存在新目录的 `result.json`，解压原始材料放 `returned/`。**命令退出码为 0 且 `status=passed` 才表示精度通过**。失败、错误模型、漏写输出及错误结果文件都会返回非零。原始日志和输出保留用于定位。
 
