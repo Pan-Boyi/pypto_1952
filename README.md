@@ -74,6 +74,8 @@ GEMMFusedKernel 使用独立的一键入口，见 [GEMMFusedKernel 编译、执�
 
 DecEncFused、FFMFused 和 InputFused 使用 [三个 ISP 算子的静态 OM 与板端验证流程](docs/TRANSFORMER_ISP_1952.md)。PyPTO、PTO-ISA 使用 Pan-Boyi 的 `codex/1952-native-om`（已同步上游 PR #2），gym 使用独立的 `codex/1952-transformer-om` checkout。在编译机运行 `scripts/build_transformer_suite.sh NEW_OUTPUT_ROOT ...` 一次编译并打包三个算子；把统一包搬到板端后，运行 `board_suite/test_transformer_suite.sh NEW_RESULT_ROOT --runtime-env /板端/runtime/set_env.sh --device 0`，依次验精度并保存报告。也保留各算子的独立出包和测试入口。板端无需安装 PyPTO 或 PyTorch。
 
+[六算子 FP16 串联验证](docs/ISP_CHAIN_1952.md) 使用本地 `codex/1952-isp-chain` 分支的 gym 和部署框架。编译端生成六个独立 OM 和一套串联 golden。板端的 `--start`、`--end` 选择闭区间，相同时只执行一个算子。
+
 在本仓库根目录执行：
 
 ```bash

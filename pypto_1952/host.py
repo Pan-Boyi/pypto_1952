@@ -27,7 +27,10 @@ def tensor_bytes(record):
     shape = record.get("shape")
     if not isinstance(shape, list) or not shape or any(type(dim) is not int or dim <= 0 for dim in shape):
         raise ValueError("Tensor shape must contain positive integers")
-    return math.prod(shape) * DTYPES[record["dtype"]][0]
+    size = DTYPES[record["dtype"]][0]
+    for dim in shape:
+        size *= dim
+    return size
 
 
 def relative_file(root, name):
